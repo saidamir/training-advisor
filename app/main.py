@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 import requests
-from openai import OpenAI
+from anthropic import Anthropic
 
 ROOT = Path(__file__).resolve().parents[1]
 PROFILE_PATH = ROOT / "config" / "profile.json"
@@ -108,8 +108,8 @@ def compact_data(data: dict[str, Any]) -> dict[str, Any]:
 
 
 def generate_report(profile: dict[str, Any], data: dict[str, Any]) -> str:
-    client = OpenAI(api_key=require_env("OPENAI_API_KEY"))
-    model = os.getenv("OPENAI_MODEL", "").strip() or "gpt-4.1-mini"
+    client = Anthropic(api_key=require_env("ANTHROPIC_API_KEY"))
+    model = os.getenv("ANTHROPIC_MODEL", "").strip() or "claude-sonnet-5"
 
     system_prompt = (
         "You are a cautious endurance-training planning assistant. Use only the supplied profile and data. "
@@ -130,15 +130,17 @@ def generate_report(profile: dict[str, Any], data: dict[str, Any]) -> str:
             "Caution: what to watch or what data is missing",
         ],
     }
-    result = client.chat.completions.create(
+    result = client.messages.create(
         model=model,
+        max_tokens=1024,
         temperature=0.2,
+        system=system_prompt,
         messages=[
-            {"role": "system", "content": system_prompt},
             {"role": "user", "content": json.dumps(user_payload, ensure_ascii=False)},
         ],
     )
-    return (result.choices[0].message.content or "").strip()
+    text_blocks = [block.text for block in result.content if block.type == "text"]
+    return "".join(text_blocks).strip()
 
 
 def send_telegram(message: str) -> None:

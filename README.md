@@ -1,11 +1,11 @@
 # Training Advisor
 
-A daily training-readiness and workout-planning report delivered to Telegram using Intervals.icu, OpenAI, and GitHub Actions.
+A daily training-readiness and workout-planning report delivered to Telegram using Intervals.icu, Anthropic's Claude, and GitHub Actions.
 
 ## What it does
 - Pulls recent activities and wellness data from Intervals.icu.
 - Reviews recent training load, recent sessions, and available recovery signals.
-- Produces a concise coaching-style report with an LLM, using explicit profile settings.
+- Produces a concise coaching-style report with Claude (Anthropic), using explicit profile settings.
 - Sends the report to Telegram.
 - Runs on a daily GitHub Actions schedule and can also be triggered manually.
 
@@ -18,9 +18,11 @@ In the repository, open **Settings → Secrets and variables → Actions → New
 
 - `INTERVALS_API_KEY`: your Intervals.icu API key.
 - `INTERVALS_ATHLETE_ID`: your athlete ID (often visible in your Intervals.icu profile/API settings).
-- `OPENAI_API_KEY`: your OpenAI API key.
+- `ANTHROPIC_API_KEY`: your Anthropic API key.
 - `TELEGRAM_BOT_TOKEN`: token from BotFather.
 - `TELEGRAM_CHAT_ID`: the chat ID where the report should be sent.
+
+Optionally add an Actions **variable** (not a secret) `ANTHROPIC_MODEL` to override the default model (`claude-sonnet-5`).
 
 ### 2. Set profile variables
 Edit `config/profile.json` to set your training zones, preferred easy-day limits, weekly structure, and goals. Defaults are starter values and should be reviewed.
@@ -29,7 +31,7 @@ Edit `config/profile.json` to set your training zones, preferred easy-day limits
 Go to **Actions → Daily Training Advisor → Run workflow** to test manually. The workflow is scheduled daily at 04:00 UTC (09:00 Uzbekistan time, UTC+5). GitHub may start scheduled jobs later than the exact minute.
 
 ## Data and privacy
-Secrets are stored in GitHub Actions and are not committed to the repository. Activity and wellness data are sent to the OpenAI API to generate the narrative report. Review your provider settings and privacy requirements before enabling the workflow.
+Secrets are stored in GitHub Actions and are not committed to the repository. Activity and wellness data are sent to the Anthropic API to generate the narrative report. Review your provider settings and privacy requirements before enabling the workflow.
 
 ## Troubleshooting
 - Confirm the Intervals.icu API key and athlete ID.
