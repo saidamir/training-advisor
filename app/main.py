@@ -132,13 +132,14 @@ def generate_report(profile: dict[str, Any], data: dict[str, Any]) -> str:
     }
     result = client.messages.create(
         model=model,
-        max_tokens=1024,
-        temperature=0.2,
+        max_tokens=16000,
         system=system_prompt,
         messages=[
             {"role": "user", "content": json.dumps(user_payload, ensure_ascii=False)},
         ],
     )
+    if result.stop_reason == "refusal":
+        raise RuntimeError(f"Claude declined to generate the report: {result.stop_details}")
     text_blocks = [block.text for block in result.content if block.type == "text"]
     return "".join(text_blocks).strip()
 
