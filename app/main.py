@@ -203,7 +203,9 @@ def generate_report(profile: dict[str, Any], data: dict[str, Any]) -> str:
         "coach_plan_trainingpeaks is the plan written by the athlete's coach (null means it isn't connected). "
         "When it has a session for today, base the recommendation on it: confirm it as written, or adjust it "
         "only when the check-in or recovery data give a clear reason, and say what changed and why. "
-        "Don't add extra sessions the coach didn't plan. The feed can lag up to 24 hours behind the coach's edits."
+        "Don't add extra sessions the coach didn't plan. The feed can lag up to 24 hours behind the coach's edits. "
+        "If a check-in contains \"Plan:\", the text after it is the coach's session for today, copied by the "
+        "athlete; treat it the same way, and prefer it over the feed when they differ."
     )
     user_payload = {
         "current_local_time": local_now.strftime("%Y-%m-%d %H:%M %Z"),
