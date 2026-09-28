@@ -28,7 +28,19 @@ Optionally add an Actions **variable** (not a secret) `ANTHROPIC_MODEL` to overr
 Edit `config/profile.json` to set your training zones, preferred easy-day limits, weekly structure, and goals. Defaults are starter values and should be reviewed.
 
 ### 3. Run it
-Go to **Actions → Daily Training Advisor → Run workflow** to test manually. The workflow is scheduled twice daily at 01:30 and 11:30 UTC (06:30 and 16:30 Uzbekistan time, UTC+5). GitHub may start scheduled jobs later than the exact minute.
+Go to **Actions → Daily Training Advisor → Run workflow** to test manually.
+
+The report is sent twice a day. GitHub's built-in schedule can start runs hours late, so an external cron service (for example cron-job.org) starts the workflow at 06:37 and 16:27 Uzbekistan time (01:37 and 11:27 UTC) by calling:
+
+```
+POST https://api.github.com/repos/<owner>/<repo>/actions/workflows/daily.yml/dispatches
+Authorization: Bearer <fine-grained token with Actions: read and write on this repo>
+Accept: application/vnd.github+json
+Body: {"ref": "main"}
+```
+
+### 4. Daily check-in
+Before each report (around 06:30 and 16:15), message the bot how you feel: energy, soreness, back pain, mood, fatigue, illness symptoms, motivation, in any words. Send `skip` or nothing to get a report without a check-in. The evening report also takes that morning's check-in into account.
 
 ## Data and privacy
 Secrets are stored in GitHub Actions and are not committed to the repository. Activity and wellness data are sent to the Anthropic API to generate the narrative report. Review your provider settings and privacy requirements before enabling the workflow.

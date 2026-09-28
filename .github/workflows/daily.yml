@@ -1,11 +1,9 @@
 name: Daily Training Advisor
 
+# Triggered by an external cron (cron-job.org) at 06:37 and 16:27 Uzbekistan time.
+# GitHub's own schedule can start runs hours late, which breaks the check-in window.
 on:
   workflow_dispatch:
-  schedule:
-    # 06:30 and 16:30 Uzbekistan time (UTC+5)
-    - cron: "30 1 * * *"
-    - cron: "30 11 * * *"
 
 permissions:
   contents: read
