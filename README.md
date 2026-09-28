@@ -21,6 +21,7 @@ In the repository, open **Settings → Secrets and variables → Actions → New
 - `ANTHROPIC_API_KEY`: your Anthropic API key.
 - `TELEGRAM_BOT_TOKEN`: token from BotFather.
 - `TELEGRAM_CHAT_ID`: the chat ID where the report should be sent.
+- `TRAININGPEAKS_ICAL_URL` (optional): your TrainingPeaks Calendar Sync link, so reports follow your coach's plan. In TrainingPeaks: your name → Settings → Calendar sync (Premium). Changes can take up to 24 hours to appear in the feed.
 
 Optionally add an Actions **variable** (not a secret) `ANTHROPIC_MODEL` to override the default model (`claude-sonnet-5`).
 
