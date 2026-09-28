@@ -3,9 +3,10 @@ from __future__ import annotations
 import json
 import os
 import sys
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import requests
 from anthropic import Anthropic
@@ -118,9 +119,15 @@ def generate_report(profile: dict[str, Any], data: dict[str, Any]) -> str:
         "why, and what to monitor. Consider recent load, wellness, upcoming events, and the athlete's stated "
         "limits. Do not prescribe intensity above the profile's limits without a clear reason. "
         "If data suggests illness, severe fatigue, unusual symptoms, or a concerning health signal, recommend "
-        "rest or professional advice rather than a hard session. Keep the message concise and readable in Telegram."
+        "rest or professional advice rather than a hard session. Keep the message concise and readable in Telegram. "
+        "Write plain text only: no Markdown, no asterisks, underscores, or # headings, because Telegram "
+        "shows them literally. Use short section labels like \"Today:\" and \"- \" for bullets. "
+        "The report is sent at 06:30 and 16:30 local time: in the morning, plan the day; in the afternoon, "
+        "account for what was already done today and advise on the rest of the day and tomorrow morning."
     )
+    local_time = datetime.now(ZoneInfo(profile.get("timezone", "UTC")))
     user_payload = {
+        "current_local_time": local_time.strftime("%Y-%m-%d %H:%M %Z"),
         "athlete_profile": profile,
         "training_data": compact_data(data),
         "output_format": [
