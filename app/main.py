@@ -179,7 +179,7 @@ def fetch_coach_plan(local_now: datetime) -> list[dict[str, str]] | None:
 
 def generate_report(profile: dict[str, Any], data: dict[str, Any]) -> str:
     client = Anthropic(api_key=require_env("ANTHROPIC_API_KEY"))
-    model = os.getenv("ANTHROPIC_MODEL", "").strip() or "claude-sonnet-4-20250514"
+    model = os.getenv("ANTHROPIC_MODEL", "").strip() or "claude-3-5-sonnet-20241022"
 
     local_now = datetime.now(ZoneInfo(profile.get("timezone", "UTC")))
     checkins = fetch_checkins(local_now)
