@@ -180,7 +180,8 @@ def fetch_coach_plan(local_now: datetime) -> list[dict[str, str]] | None:
 def generate_report(profile: dict[str, Any], data: dict[str, Any]) -> str:
     api_key = require_env("ANTHROPIC_API_KEY")
     client = Anthropic(api_key=api_key)
-    model = os.getenv("ANTHROPIC_MODEL", "").strip() or "claude-3-5-sonnet-20240620"
+    # Try the most basic model that should be available to all API keys
+    model = os.getenv("ANTHROPIC_MODEL", "").strip() or "claude-3-haiku-20240307"
     print(f"Using model: {model}", file=sys.stderr)
 
     local_now = datetime.now(ZoneInfo(profile.get("timezone", "UTC")))
