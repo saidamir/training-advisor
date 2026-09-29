@@ -180,8 +180,9 @@ def fetch_coach_plan(local_now: datetime) -> list[dict[str, str]] | None:
 def generate_report(profile: dict[str, Any], data: dict[str, Any]) -> str:
     api_key = require_env("ANTHROPIC_API_KEY")
     client = Anthropic(api_key=api_key)
-    # Try the most basic model that should be available to all API keys
-    model = os.getenv("ANTHROPIC_MODEL", "").strip() or "claude-3-haiku-20240307"
+    # Use Claude Sonnet 5 (the model shown in your usage CSV)
+    # The API model ID for "Claude Sonnet 5" is claude-sonnet-4-5-20250929
+    model = os.getenv("ANTHROPIC_MODEL", "").strip() or "claude-sonnet-4-5-20250929"
     print(f"Using model: {model}", file=sys.stderr)
 
     local_now = datetime.now(ZoneInfo(profile.get("timezone", "UTC")))
