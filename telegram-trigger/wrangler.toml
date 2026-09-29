@@ -1,0 +1,15 @@
+name = "training-advisor-telegram-trigger"
+main = "src/index.js"
+compatibility_date = "2026-09-01"
+
+# Plain (non-secret) vars — safe to commit, they're just identifiers.
+[vars]
+GITHUB_OWNER = "saidamir"
+GITHUB_REPO = "training-advisor"
+WORKFLOW_FILE = "daily.yml"
+GITHUB_REF = "main"
+
+# Secrets (GITHUB_PAT, TELEGRAM_CHAT_ID, TELEGRAM_WEBHOOK_SECRET) are NOT
+# listed here — set them with `wrangler secret put <NAME>` after deploying.
+# TELEGRAM_CHAT_ID is a secret rather than a var only because it's tied to
+# your personal account; nothing about it is sensitive on its own.
