@@ -3,9 +3,8 @@
  *
  * Telegram calls this worker (via a webhook) the instant you send the bot a
  * message. The worker checks it's really Telegram and really your chat, then
- * asks GitHub to run the "Daily Training Advisor" workflow right away.
- * app/main.py reads the check-in itself via the Telegram getUpdates API, so
- * this worker's only job is timing: fire the run, don't touch the content.
+ * asks GitHub to run the "Daily Training Advisor" workflow right away,
+ * passing the check-in message text and timestamp as workflow inputs.
  *
  * Required secrets/vars (set with `wrangler secret put <NAME>` unless noted):
  *   GITHUB_PAT               - fine-grained PAT, "Actions: write" on this repo only
@@ -56,6 +55,7 @@ export default {
       `https://api.github.com/repos/${env.GITHUB_OWNER}/${env.GITHUB_REPO}` +
       `/actions/workflows/${env.WORKFLOW_FILE}/dispatches`;
 
+    // Pass the check-in message text and timestamp as workflow inputs
     const ghResponse = await fetch(dispatchUrl, {
       method: "POST",
       headers: {
@@ -64,7 +64,13 @@ export default {
         "X-GitHub-Api-Version": "2022-11-28",
         "User-Agent": "training-advisor-telegram-trigger",
       },
-      body: JSON.stringify({ ref: env.GITHUB_REF || "main" }),
+      body: JSON.stringify({
+        ref: env.GITHUB_REF || "main",
+        inputs: {
+          checkin_text: message.text,
+          checkin_timestamp: String(message.date)
+        }
+      }),
     });
 
     if (!ghResponse.ok) {

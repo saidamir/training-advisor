@@ -111,33 +111,35 @@ def compact_data(data: dict[str, Any]) -> dict[str, Any]:
 
 
 def fetch_checkins(local_now: datetime) -> list[dict[str, str]]:
-    """Return today's messages the athlete sent to the bot, oldest first.
+    """Return today's check-in message from workflow input or empty list.
 
-    Telegram keeps unconfirmed updates for 24 hours. We never confirm them (no offset),
-    so the evening run still sees the morning check-in.
+    When triggered via webhook, the check-in text and timestamp are passed
+    as workflow inputs (CHECKIN_TEXT and CHECKIN_TIMESTAMP environment variables).
+    When triggered via schedule cron, these will be empty.
     """
-    token = require_env("TELEGRAM_BOT_TOKEN")
-    chat_id = require_env("TELEGRAM_CHAT_ID")
-    response = requests.get(
-        f"https://api.telegram.org/bot{token}/getUpdates",
-        params={"allowed_updates": json.dumps(["message"])},
-        timeout=30,
-    )
-    response.raise_for_status()
-    checkins = []
-    for update in response.json().get("result", []):
-        message = update.get("message") or {}
-        text = (message.get("text") or "").strip()
-        # Only accept messages from the athlete's own chat; ignore bot commands like /start.
-        if str(message.get("chat", {}).get("id")) != chat_id or not text or text.startswith("/"):
-            continue
-        sent = datetime.fromtimestamp(message["date"], local_now.tzinfo)
-        if sent.date() != local_now.date() or sent > local_now:
-            continue
-        if text.lower().strip(" .!") == "skip":
-            continue
-        checkins.append({"sent_at": sent.strftime("%H:%M"), "text": text})
-    return checkins
+    checkin_text = os.getenv("CHECKIN_TEXT", "").strip()
+    checkin_timestamp = os.getenv("CHECKIN_TIMESTAMP", "").strip()
+
+    if not checkin_text or not checkin_timestamp:
+        return []
+
+    # Ignore "skip" messages
+    if checkin_text.lower().strip(" .!") == "skip":
+        return []
+
+    # Ignore bot commands
+    if checkin_text.startswith("/"):
+        return []
+
+    try:
+        sent = datetime.fromtimestamp(int(checkin_timestamp), local_now.tzinfo)
+        # Only include if message is from today
+        if sent.date() != local_now.date():
+            return []
+        return [{"sent_at": sent.strftime("%H:%M"), "text": checkin_text}]
+    except (ValueError, OSError):
+        # Invalid timestamp
+        return []
 
 
 def fetch_coach_plan(local_now: datetime) -> list[dict[str, str]] | None:

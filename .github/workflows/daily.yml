@@ -2,6 +2,15 @@ name: Daily Training Advisor
 
 on:
   workflow_dispatch:
+    inputs:
+      checkin_text:
+        description: 'Check-in message text from Telegram'
+        required: false
+        type: string
+      checkin_timestamp:
+        description: 'Check-in message timestamp (Unix)'
+        required: false
+        type: string
   schedule:
     # 06:37 and 16:27 Uzbekistan time (UTC+5), after the athlete's check-in.
     # Off-the-hour minutes avoid GitHub's busiest scheduling slots.
@@ -34,4 +43,6 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           TRAININGPEAKS_ICAL_URL: ${{ secrets.TRAININGPEAKS_ICAL_URL }}
           ANTHROPIC_MODEL: ${{ vars.ANTHROPIC_MODEL }}
+          CHECKIN_TEXT: ${{ inputs.checkin_text }}
+          CHECKIN_TIMESTAMP: ${{ inputs.checkin_timestamp }}
         run: python -m app.main
