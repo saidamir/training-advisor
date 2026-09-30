@@ -1,5 +1,7 @@
 # Training Advisor
 
+**English** | [Русский](README.ru.md)
+
 A daily training-readiness and workout-planning report delivered to Telegram using Intervals.icu, Anthropic's Claude, and GitHub Actions.
 
 ## What it does
@@ -11,6 +13,14 @@ A daily training-readiness and workout-planning report delivered to Telegram usi
 - Optionally integrates with your coach's TrainingPeaks plan
 
 **This is a decision-support tool, not medical advice.** It should not override your coach, symptoms, or clinician's guidance.
+
+## Example Report
+
+Here's what a typical report looks like in Telegram:
+
+![Example training advisor report](docs/images/example-report.png)
+
+The bot analyzes your check-in message, training data, and wellness metrics to provide personalized recommendations for rest or training.
 
 ---
 
