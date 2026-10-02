@@ -240,12 +240,12 @@ curl "https://api.telegram.org/bot<ВАШ_ТОКЕН_TELEGRAM_БОТА>/setWebho
 
 ### Изменить модель AI
 
-Модель по умолчанию - `claude-sonnet-4-5-20250929` (Claude Sonnet 5).
+Модель по умолчанию - `claude-opus-5-5` (Claude Opus 5.5).
 
 Чтобы использовать другую модель:
 1. Перейдите в **Settings → Secrets and variables → Actions → Variables**
 2. Добавьте новую переменную с именем `ANTHROPIC_MODEL`
-3. Установите значение на предпочитаемый ID модели (например, `claude-3-5-sonnet-20240620`)
+3. Установите значение на предпочитаемый ID модели (например, `claude-sonnet-5-5`)
 
 ### Настроить тренировочные рекомендации
 
