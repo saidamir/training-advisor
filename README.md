@@ -240,12 +240,12 @@ Use https://crontab.guru to help with cron syntax.
 
 ### Change the AI model
 
-The default model is `claude-sonnet-4-5-20250929` (Claude Sonnet 5).
+The default model is `claude-opus-5-5` (Claude Opus 5.5).
 
 To use a different model:
 1. Go to **Settings → Secrets and variables → Actions → Variables**
 2. Add a new variable named `ANTHROPIC_MODEL`
-3. Set the value to your preferred model ID (e.g., `claude-3-5-sonnet-20240620`)
+3. Set the value to your preferred model ID (e.g., `claude-sonnet-5-5`)
 
 ### Adjust training recommendations
 

@@ -231,9 +231,7 @@ def fetch_air_quality(profile: dict[str, Any]) -> dict[str, Any] | None:
 def generate_report(profile: dict[str, Any], data: dict[str, Any]) -> str:
     api_key = require_env("ANTHROPIC_API_KEY")
     client = Anthropic(api_key=api_key)
-    # Use Claude Sonnet 5 (the model shown in your usage CSV)
-    # The API model ID for "Claude Sonnet 5" is claude-sonnet-4-5-20250929
-    model = os.getenv("ANTHROPIC_MODEL", "").strip() or "claude-sonnet-4-5-20250929"
+    model = os.getenv("ANTHROPIC_MODEL", "").strip() or "claude-opus-5-5"
     print(f"Using model: {model}", file=sys.stderr)
 
     local_now = datetime.now(ZoneInfo(profile.get("timezone", "UTC")))
@@ -285,9 +283,12 @@ def generate_report(profile: dict[str, Any], data: dict[str, Any]) -> str:
             "Caution: what to watch or what data is missing",
         ],
     }
-    result = client.messages.create(
+    # If the model declines on a safety classifier, the API retries on a fallback model in the same call.
+    result = client.beta.messages.create(
         model=model,
         max_tokens=16000,
+        betas=["server-side-fallback-2026-07-01"],
+        fallbacks="default",
         system=system_prompt,
         messages=[
             {"role": "user", "content": json.dumps(user_payload, ensure_ascii=False)},
