@@ -206,10 +206,9 @@ def fetch_air_quality(profile: dict[str, Any]) -> dict[str, Any] | None:
                 },
                 timeout=30,
             )
-        response.raise_for_status()
         body = response.json()
-        if body.get("status") != "success":
-            raise ValueError(body.get("data"))
+        if response.status_code != 200 or body.get("status") != "success":
+            raise ValueError(f"HTTP {response.status_code}: {body.get('data')}")
         data = body["data"]
         current = data["current"]
         pollution = current["pollution"]

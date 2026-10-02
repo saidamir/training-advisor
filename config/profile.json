@@ -13,8 +13,7 @@
   ],
   "air_quality": {
     "label": "Tashkent (city average)",
-    "city": "Tashkent",
-    "state": "Tashkent",
-    "country": "Uzbekistan"
+    "lat": 41.2995,
+    "lon": 69.2401
   }
 }
