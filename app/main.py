@@ -15,6 +15,7 @@ from anthropic import Anthropic
 ROOT = Path(__file__).resolve().parents[1]
 PROFILE_PATH = ROOT / "config" / "profile.json"
 INTERVALS_BASE = "https://intervals.icu/api/v1"
+IQAIR_BASE = "https://api.airvisual.com/v2"
 
 
 def require_env(name: str) -> str:
@@ -177,6 +178,57 @@ def fetch_coach_plan(local_now: datetime) -> list[dict[str, str]] | None:
     return sorted(plan, key=lambda item: item["date"])
 
 
+def fetch_air_quality(profile: dict[str, Any]) -> dict[str, Any] | None:
+    """Current air quality from the IQAir (AirVisual) API, if IQAIR_API_KEY is set.
+
+    Uses the profile's air_quality.lat/lon (nearest city/station) when present, otherwise the city name.
+    Returns None when not configured or on any failure: air quality must never block the daily report.
+    """
+    key = os.getenv("IQAIR_API_KEY", "").strip()
+    if not key:
+        return None
+    cfg = profile.get("air_quality") or {}
+    try:
+        if "lat" in cfg and "lon" in cfg:
+            response = requests.get(
+                f"{IQAIR_BASE}/nearest_city",
+                params={"lat": cfg["lat"], "lon": cfg["lon"], "key": key},
+                timeout=30,
+            )
+        else:
+            response = requests.get(
+                f"{IQAIR_BASE}/city",
+                params={
+                    "city": cfg.get("city", "Tashkent"),
+                    "state": cfg.get("state", "Tashkent"),
+                    "country": cfg.get("country", "Uzbekistan"),
+                    "key": key,
+                },
+                timeout=30,
+            )
+        response.raise_for_status()
+        body = response.json()
+        if body.get("status") != "success":
+            raise ValueError(body.get("data"))
+        data = body["data"]
+        current = data["current"]
+        pollution = current["pollution"]
+        weather = current.get("weather", {})
+    except (requests.RequestException, ValueError, KeyError) as exc:
+        print(f"Air quality unavailable; continuing without it: {exc}", file=sys.stderr)
+        return None
+
+    return {
+        "location": cfg.get("label") or data.get("city"),
+        "measured_at_utc": pollution.get("ts"),
+        "aqi_us": pollution.get("aqius"),
+        "main_pollutant": pollution.get("mainus"),
+        "temperature_c": weather.get("tp"),
+        "humidity_pct": weather.get("hu"),
+        "source": "IQAir",
+    }
+
+
 def generate_report(profile: dict[str, Any], data: dict[str, Any]) -> str:
     api_key = require_env("ANTHROPIC_API_KEY")
     client = Anthropic(api_key=api_key)
@@ -188,6 +240,7 @@ def generate_report(profile: dict[str, Any], data: dict[str, Any]) -> str:
     local_now = datetime.now(ZoneInfo(profile.get("timezone", "UTC")))
     checkins = fetch_checkins(local_now)
     coach_plan = fetch_coach_plan(local_now)
+    air_quality = fetch_air_quality(profile)
 
     system_prompt = (
         "You are a cautious endurance-training planning assistant. Use only the supplied profile and data. "
@@ -211,17 +264,23 @@ def generate_report(profile: dict[str, Any], data: dict[str, Any]) -> str:
         "only when the check-in or recovery data give a clear reason, and say what changed and why. "
         "Don't add extra sessions the coach didn't plan. The feed can lag up to 24 hours behind the coach's edits. "
         "If a check-in contains \"Plan:\", the text after it is the coach's session for today, copied by the "
-        "athlete; treat it the same way, and prefer it over the feed when they differ."
+        "athlete; treat it the same way, and prefer it over the feed when they differ. "
+        "air_quality_iqair is the current US AQI near the athlete (null means unavailable). Add an \"Air:\" line "
+        "with the AQI, its category (0-50 good, 51-100 moderate, 101-150 unhealthy for sensitive groups, "
+        "151-200 unhealthy, 201+ very unhealthy) and the main pollutant. For outdoor training: above 100 suggest "
+        "easing intensity or moving indoors, above 150 recommend indoors or rest. Do not invent numbers if it is null."
     )
     user_payload = {
         "current_local_time": local_now.strftime("%Y-%m-%d %H:%M %Z"),
         "athlete_checkins": checkins,
         "coach_plan_trainingpeaks": coach_plan,
+        "air_quality_iqair": air_quality,
         "athlete_profile": profile,
         "training_data": compact_data(data),
         "output_format": [
             "Check-in: what the athlete reported today, or that there was no check-in",
             "Today: recommendation",
+            "Air: AQI and category for the athlete's location, with an outdoor-training note (skip if unavailable)",
             "Why: 2-4 concise bullets",
             "Session: the coach's planned session for today (as written or adjusted), or an optional concrete workout",
             "Caution: what to watch or what data is missing",
