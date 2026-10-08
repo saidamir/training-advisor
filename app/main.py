@@ -223,8 +223,10 @@ def format_condition(summary: dict[str, dict[str, Any]], today: date) -> str:
     stale: list[str] = []
     for field, *_ in CONDITION_METRICS:
         m = summary[field]
+        if m["latest"] is None:
+            continue  # never reported in the whole history (e.g. Garmin doesn't sync readiness)
         now = table_cell(field, m["latest"])
-        if m["latest"] is not None and m["latest_date"] != today.isoformat():
+        if m["latest_date"] != today.isoformat():
             now += "*"
             stale.append(f"{TABLE_LABELS[field]} from {date.fromisoformat(m['latest_date']).strftime('%b %d')}")
         rows.append(
@@ -279,6 +281,8 @@ def format_recovery(summary: dict[str, dict[str, Any]], verdict: str) -> str:
     rows = []
     for field, *_ in CONDITION_METRICS:
         m = summary[field]
+        if m["latest"] is None:
+            continue
         label = TABLE_LABELS[field].replace(" ms", "").replace(" bpm", "")
         row = f"{STATUS_EMOJI[m['color']]} {label:<8}{m['status']:<9}"
         if m["latest"] is not None and m.get("avg_30d") is not None:
@@ -296,6 +300,19 @@ def extract_recovery(report: str) -> tuple[str, str]:
     verdict = " ".join(match.group(0).split())
     rest = (report[:match.start()] + report[match.end():]).strip()
     return verdict, re.sub(r"\n{3,}", "\n\n", rest)
+
+
+GLOSSARY = (
+    "Legend:\n"
+    "- HRV: heart rate variability, higher means better recovered.\n"
+    "- RHR: resting heart rate, lower means better recovered.\n"
+    "- Fitness (CTL): your training load averaged over about 6 weeks. It is long-term fitness and should rise slowly.\n"
+    "- Fatigue (ATL): your training load averaged over about 1 week. It is short-term tiredness.\n"
+    "- Form (CTL-ATL): fitness minus fatigue. Above +5 means fresh, -10 to +5 is normal, -10 to -30 is "
+    "productive training fatigue, and below -30 is overload risk. Staying very fresh for long means fitness is fading.\n"
+    "- Colours compare today with your 30-day average: green means normal or better, yellow means worse, "
+    "red means clearly worse."
+)
 
 
 def fetch_checkins(local_now: datetime) -> list[dict[str, str]]:
@@ -458,11 +475,13 @@ def generate_report(profile: dict[str, Any], data: dict[str, Any], condition: di
         "good. The athlete already sees these numbers as a table above your message, so don't repeat the table. "
         "Each metric's 'status' (vs its 30-day average) is also shown to the athlete as a colour-coded table. "
         "Write the \"Recovery:\" section as ONE line: the verdict (well / partly / poorly recovered), a dash, "
-        "and the two or three metrics that drive it in a few words, without numbers. Example: "
+        "and the two or three metrics that drive it, without numbers, 12 words at most. Example: "
         "\"Recovery: Partly recovered - resting HR elevated, fitness slipping.\" "
         "Readiness, fitness (CTL), fatigue (ATL) and form (CTL-ATL, negative means carrying fatigue) all count. "
         "Use the numbers in Why and Caution where they matter; a missing or stale metric (latest_date not today) "
-        "should be called out there, not guessed."
+        "should be called out there, not guessed. A metric with latest null has never been reported (the watch "
+        "doesn't sync it), so don't mention it at all. A legend explaining the metrics is appended after your "
+        "message, so don't define them."
     )
     user_payload = {
         "current_local_time": local_now.strftime("%Y-%m-%d %H:%M %Z"),
@@ -549,6 +568,7 @@ def main() -> None:
     header = format_condition(condition, date.fromisoformat(data["generated_on"]))
     if any(m["latest"] is not None for m in condition.values()):
         header += "\n\n" + format_recovery(condition, verdict)
+    report = f"{report}\n\n{GLOSSARY}"
     print(header + "\n\n" + report)
     send_telegram(header, report)
 
