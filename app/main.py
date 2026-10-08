@@ -16,6 +16,19 @@ ROOT = Path(__file__).resolve().parents[1]
 PROFILE_PATH = ROOT / "config" / "profile.json"
 INTERVALS_BASE = "https://intervals.icu/api/v1"
 IQAIR_BASE = "https://api.airvisual.com/v2"
+WELLNESS_HISTORY_DAYS = 90
+
+# (field, label, unit, which direction is better: "high", "low" or None when neither is)
+CONDITION_METRICS = (
+    ("hrv", "HRV", " ms", "high"),
+    ("restingHR", "Resting HR", " bpm", "low"),
+    ("sleepScore", "Sleep score", "", "high"),
+    ("sleepHours", "Sleep", " h", "high"),
+    ("readiness", "Readiness", "", "high"),
+    ("ctl", "Fitness (CTL)", "", "high"),
+    ("atl", "Fatigue (ATL)", "", None),
+    ("form", "Form (CTL-ATL)", "", None),
+)
 
 
 def require_env(name: str) -> str:
@@ -57,7 +70,7 @@ def fetch_training_data() -> dict[str, Any]:
     try:
         wellness = intervals_get(
             "wellness",
-            {"oldest": (today - timedelta(days=14)).isoformat(), "newest": newest},
+            {"oldest": (today - timedelta(days=WELLNESS_HISTORY_DAYS)).isoformat(), "newest": newest},
         )
     except requests.HTTPError as exc:
         # Wellness may be unavailable depending on API permissions/configuration.
@@ -75,7 +88,7 @@ def fetch_training_data() -> dict[str, Any]:
     return {
         "generated_on": today.isoformat(),
         "activities_last_28_days": activities,
-        "wellness_last_14_days": wellness,
+        "wellness_history": wellness,
         "upcoming_events": events,
     }
 
@@ -83,7 +96,11 @@ def fetch_training_data() -> dict[str, Any]:
 def compact_data(data: dict[str, Any]) -> dict[str, Any]:
     """Keep the prompt compact while preserving common training and recovery fields."""
     activities = data.get("activities_last_28_days") or []
-    wellness = data.get("wellness_last_14_days") or []
+    cutoff = (date.fromisoformat(data["generated_on"]) - timedelta(days=14)).isoformat()
+    wellness = [
+        row for row in data.get("wellness_history") or []
+        if isinstance(row, dict) and str(row.get("id", "")) >= cutoff
+    ]
     events = data.get("upcoming_events") or []
 
     activity_fields = (
@@ -109,6 +126,79 @@ def compact_data(data: dict[str, Any]) -> dict[str, Any]:
         "wellness": select(wellness, wellness_fields),
         "upcoming_events": select(events, event_fields),
     }
+
+
+def summarize_condition(wellness: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Latest value of each recovery metric vs its 7- and 14-day averages and the best of the whole history.
+
+    Averages exclude the latest day, so they show what "normal" looked like before today.
+    """
+    rows = sorted((r for r in wellness if isinstance(r, dict) and r.get("id")), key=lambda r: str(r["id"]))
+    series: dict[str, list[tuple[date, float]]] = {field: [] for field, *_ in CONDITION_METRICS}
+    for row in rows:
+        day = date.fromisoformat(str(row["id"])[:10])
+        values = {k: row.get(k) for k in ("hrv", "restingHR", "sleepScore", "readiness", "ctl", "atl")}
+        if row.get("sleepSecs"):
+            values["sleepHours"] = row["sleepSecs"] / 3600
+        if row.get("ctl") is not None and row.get("atl") is not None:
+            values["form"] = row["ctl"] - row["atl"]
+        for field, value in values.items():
+            if isinstance(value, (int, float)):
+                series[field].append((day, float(value)))
+
+    def mean(points: list[tuple[date, float]]) -> float | None:
+        return round(sum(v for _, v in points) / len(points), 1) if points else None
+
+    summary: dict[str, dict[str, Any]] = {}
+    for field, label, unit, better in CONDITION_METRICS:
+        points = series[field]
+        if not points:
+            summary[field] = {"label": label, "unit": unit, "latest": None}
+            continue
+        latest_day, latest = points[-1]
+        earlier = points[:-1]
+        entry: dict[str, Any] = {
+            "label": label,
+            "unit": unit,
+            "better": better,
+            "latest": round(latest, 1),
+            "latest_date": latest_day.isoformat(),
+            "avg_7d": mean([p for p in earlier if p[0] >= latest_day - timedelta(days=7)]),
+            "avg_14d": mean([p for p in earlier if p[0] >= latest_day - timedelta(days=14)]),
+        }
+        if better:
+            # Reversed so a tie goes to the most recent day.
+            best_day, best = (max if better == "high" else min)(reversed(points), key=lambda p: p[1])
+            entry["best"] = round(best, 1)
+            entry["best_date"] = best_day.isoformat()
+            entry["history_days"] = (latest_day - points[0][0]).days + 1
+        summary[field] = entry
+    return summary
+
+
+def format_condition(summary: dict[str, dict[str, Any]], today: date) -> str:
+    def num(value: float | None) -> str:
+        if value is None:
+            return "-"
+        return str(int(value)) if value == int(value) else f"{value:.1f}"
+
+    history = max((m.get("history_days", 0) for m in summary.values()), default=0)
+    if not history:
+        return "Condition: no wellness data from intervals.icu"
+    lines = [f"Condition: latest | 7d avg | 14d avg | best {history}d"]
+    for field, *_ in CONDITION_METRICS:
+        m = summary[field]
+        if m["latest"] is None:
+            lines.append(f"- {m['label']}: no data")
+            continue
+        line = f"- {m['label']}: {num(m['latest'])}{m['unit']}"
+        if m["latest_date"] != today.isoformat():
+            line += f" (from {date.fromisoformat(m['latest_date']).strftime('%b %d')})"
+        line += f" | {num(m['avg_7d'])} | {num(m['avg_14d'])}"
+        if "best" in m:
+            line += f" | {num(m['best'])} ({date.fromisoformat(m['best_date']).strftime('%b %d')})"
+        lines.append(line)
+    return "\n".join(lines)
 
 
 def fetch_checkins(local_now: datetime) -> list[dict[str, str]]:
@@ -228,7 +318,7 @@ def fetch_air_quality(profile: dict[str, Any]) -> dict[str, Any] | None:
     }
 
 
-def generate_report(profile: dict[str, Any], data: dict[str, Any]) -> str:
+def generate_report(profile: dict[str, Any], data: dict[str, Any], condition: dict[str, dict[str, Any]]) -> str:
     api_key = require_env("ANTHROPIC_API_KEY")
     client = Anthropic(api_key=api_key)
     model = os.getenv("ANTHROPIC_MODEL", "").strip() or "claude-opus-5-5"
@@ -265,7 +355,14 @@ def generate_report(profile: dict[str, Any], data: dict[str, Any]) -> str:
         "air_quality_iqair is the current US AQI near the athlete (null means unavailable). Add an \"Air:\" line "
         "with the AQI, its category (0-50 good, 51-100 moderate, 101-150 unhealthy for sensitive groups, "
         "151-200 unhealthy, 201+ very unhealthy) and the main pollutant. For outdoor training: above 100 suggest "
-        "easing intensity or moving indoors, above 150 recommend indoors or rest. Do not invent numbers if it is null."
+        "easing intensity or moving indoors, above 150 recommend indoors or rest. Do not invent numbers if it is null. "
+        "condition_summary holds each recovery metric's latest value, its 7- and 14-day averages (excluding the "
+        "latest day) and the athlete's best value in the available history; 'better' says which direction is "
+        "good. The athlete already sees these numbers as a table above your message, so don't repeat the table. "
+        "Use it for the \"Recovery:\" section: say how recovered the athlete is (well / partly / poorly), "
+        "comparing today with their recent normal and their best, and name the metrics that drive the verdict. "
+        "Readiness, fitness (CTL), fatigue (ATL) and form (CTL-ATL, negative means carrying fatigue) all count. "
+        "A metric that is missing or stale (latest_date not today) should be called out, not guessed."
     )
     user_payload = {
         "current_local_time": local_now.strftime("%Y-%m-%d %H:%M %Z"),
@@ -273,10 +370,13 @@ def generate_report(profile: dict[str, Any], data: dict[str, Any]) -> str:
         "coach_plan_trainingpeaks": coach_plan,
         "air_quality_iqair": air_quality,
         "athlete_profile": profile,
+        "condition_summary": condition,
         "training_data": compact_data(data),
         "output_format": [
             "Check-in: what the athlete reported today, or that there was no check-in",
-            "Today: recommendation",
+            "Recovery: verdict (well / partly / poorly recovered) and 2-3 sentences on how today compares with "
+            "the last 7-14 days and with the athlete's best, including readiness, fitness, fatigue and form",
+            "Today: train or rest, and at what intensity",
             "Air: AQI and category for the athlete's location, with an outdoor-training note (skip if unavailable)",
             "Why: 2-4 concise bullets",
             "Session: the coach's planned session for today (as written or adjusted), or an optional concrete workout",
@@ -300,28 +400,51 @@ def generate_report(profile: dict[str, Any], data: dict[str, Any]) -> str:
     return "".join(text_blocks).strip()
 
 
+def split_message(message: str, limit: int = 4000) -> list[str]:
+    """Split at paragraph breaks so each part fits Telegram's 4096-character limit."""
+    parts: list[str] = []
+    current = ""
+    for paragraph in message.split("\n\n"):
+        candidate = f"{current}\n\n{paragraph}" if current else paragraph
+        if len(candidate) <= limit:
+            current = candidate
+            continue
+        if current:
+            parts.append(current)
+        while len(paragraph) > limit:
+            parts.append(paragraph[:limit])
+            paragraph = paragraph[limit:]
+        current = paragraph
+    if current:
+        parts.append(current)
+    return parts
+
+
 def send_telegram(message: str) -> None:
     token = require_env("TELEGRAM_BOT_TOKEN")
     chat_id = require_env("TELEGRAM_CHAT_ID")
-    response = requests.post(
-        f"https://api.telegram.org/bot{token}/sendMessage",
-        json={"chat_id": chat_id, "text": message[:4000], "disable_web_page_preview": True},
-        timeout=30,
-    )
-    response.raise_for_status()
-    body = response.json()
-    if not body.get("ok"):
-        raise RuntimeError(f"Telegram API returned an error: {body}")
+    for part in split_message(message):
+        response = requests.post(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            json={"chat_id": chat_id, "text": part, "disable_web_page_preview": True},
+            timeout=30,
+        )
+        response.raise_for_status()
+        body = response.json()
+        if not body.get("ok"):
+            raise RuntimeError(f"Telegram API returned an error: {body}")
 
 
 def main() -> None:
     profile = load_profile()
     data = fetch_training_data()
-    report = generate_report(profile, data)
+    condition = summarize_condition(data["wellness_history"] or [])
+    report = generate_report(profile, data, condition)
     if not report:
         raise RuntimeError("The model returned an empty report.")
-    print(report)
-    send_telegram(report)
+    message = format_condition(condition, date.fromisoformat(data["generated_on"])) + "\n\n" + report
+    print(message)
+    send_telegram(message)
 
 
 if __name__ == "__main__":
