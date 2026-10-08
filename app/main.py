@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import html
 import json
 import os
 import sys
@@ -176,29 +177,49 @@ def summarize_condition(wellness: list[dict[str, Any]]) -> dict[str, dict[str, A
     return summary
 
 
-def format_condition(summary: dict[str, dict[str, Any]], today: date) -> str:
-    def num(value: float | None) -> str:
-        if value is None:
-            return "-"
-        return str(int(value)) if value == int(value) else f"{value:.1f}"
+# Short row names keep the table about 30 characters wide, so it doesn't wrap on a phone.
+TABLE_LABELS = {
+    "hrv": "HRV ms",
+    "restingHR": "RHR bpm",
+    "sleepScore": "Sleep",
+    "sleepHours": "Sleep h",
+    "readiness": "Ready",
+    "ctl": "Fitness",
+    "atl": "Fatigue",
+    "form": "Form",
+}
 
+
+def format_condition(summary: dict[str, dict[str, Any]], today: date) -> str:
+    """Telegram HTML: a monospace table of latest vs 7d / 14d averages and best."""
     history = max((m.get("history_days", 0) for m in summary.values()), default=0)
     if not history:
-        return "Condition: no wellness data from intervals.icu"
-    lines = [f"Condition: latest | 7d avg | 14d avg | best {history}d"]
+        return "<b>Condition</b>: no wellness data from intervals.icu"
+
+    def cell(field: str, value: float | None) -> str:
+        if value is None:
+            return "-"
+        if field == "sleepHours":
+            return f"{value:.1f}"
+        if field == "form":
+            return f"{value:+.0f}"
+        return f"{value:.0f}"
+
+    rows = [f"{'':<8}{'now':>5}{'7d':>5}{'14d':>5}{'best':>6}"]
+    stale: list[str] = []
     for field, *_ in CONDITION_METRICS:
         m = summary[field]
-        if m["latest"] is None:
-            lines.append(f"- {m['label']}: no data")
-            continue
-        line = f"- {m['label']}: {num(m['latest'])}{m['unit']}"
-        if m["latest_date"] != today.isoformat():
-            line += f" (from {date.fromisoformat(m['latest_date']).strftime('%b %d')})"
-        line += f" | {num(m['avg_7d'])} | {num(m['avg_14d'])}"
-        if "best" in m:
-            line += f" | {num(m['best'])} ({date.fromisoformat(m['best_date']).strftime('%b %d')})"
-        lines.append(line)
-    return "\n".join(lines)
+        now = cell(field, m["latest"])
+        if m["latest"] is not None and m["latest_date"] != today.isoformat():
+            now += "*"
+            stale.append(f"{TABLE_LABELS[field]} from {date.fromisoformat(m['latest_date']).strftime('%b %d')}")
+        rows.append(
+            f"{TABLE_LABELS[field]:<8}{now:>5}{cell(field, m.get('avg_7d')):>5}"
+            f"{cell(field, m.get('avg_14d')):>5}{cell(field, m.get('best')) if 'best' in m else '':>6}"
+        )
+    if stale:
+        rows.append("* " + "; ".join(f"{item}" for item in stale))
+    return f"<b>Condition</b> (best = last {history} days)\n<pre>{html.escape(chr(10).join(rows))}</pre>"
 
 
 def fetch_checkins(local_now: datetime) -> list[dict[str, str]]:
@@ -420,13 +441,16 @@ def split_message(message: str, limit: int = 4000) -> list[str]:
     return parts
 
 
-def send_telegram(message: str) -> None:
+def send_telegram(header_html: str, report: str) -> None:
+    """Send the HTML header followed by the plain-text report (escaped), split across messages if long."""
     token = require_env("TELEGRAM_BOT_TOKEN")
     chat_id = require_env("TELEGRAM_CHAT_ID")
-    for part in split_message(message):
+    parts = [html.escape(part, quote=False) for part in split_message(report, limit=3500)] or [""]
+    parts[0] = f"{header_html}\n\n{parts[0]}"
+    for part in parts:
         response = requests.post(
             f"https://api.telegram.org/bot{token}/sendMessage",
-            json={"chat_id": chat_id, "text": part, "disable_web_page_preview": True},
+            json={"chat_id": chat_id, "text": part, "parse_mode": "HTML", "disable_web_page_preview": True},
             timeout=30,
         )
         response.raise_for_status()
@@ -442,9 +466,9 @@ def main() -> None:
     report = generate_report(profile, data, condition)
     if not report:
         raise RuntimeError("The model returned an empty report.")
-    message = format_condition(condition, date.fromisoformat(data["generated_on"])) + "\n\n" + report
-    print(message)
-    send_telegram(message)
+    header = format_condition(condition, date.fromisoformat(data["generated_on"]))
+    print(header + "\n\n" + report)
+    send_telegram(header, report)
 
 
 if __name__ == "__main__":
