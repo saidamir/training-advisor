@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import html
 import json
+import re
 import os
 import sys
 from datetime import date, datetime, timedelta
@@ -30,6 +31,18 @@ CONDITION_METRICS = (
     ("atl", "Fatigue (ATL)", "", None),
     ("form", "Form (CTL-ATL)", "", None),
 )
+
+# How far today may drift from the 30-day average before it counts as better or worse:
+# (threshold, is it a fraction of the average, word when better, word when worse).
+STATUS_RULES = {
+    "hrv": (0.07, True, "above", "below"),
+    "restingHR": (2, False, "low", "high"),
+    "sleepScore": (5, False, "good", "low"),
+    "sleepHours": (0.5, False, "long", "short"),
+    "readiness": (10, False, "high", "low"),
+    "ctl": (2, False, "rising", "falling"),
+    "atl": (5, False, "low", "high"),
+}
 
 
 def require_env(name: str) -> str:
@@ -190,36 +203,116 @@ TABLE_LABELS = {
 }
 
 
+def table_cell(field: str, value: float | None) -> str:
+    if value is None:
+        return "-"
+    if field == "sleepHours":
+        return f"{value:.1f}"
+    if field == "form":
+        return f"{value:+.0f}"
+    return f"{value:.0f}"
+
+
 def format_condition(summary: dict[str, dict[str, Any]], today: date) -> str:
     """Telegram HTML: a monospace table of latest vs 7d / 30d averages and best."""
     history = max((m.get("history_days", 0) for m in summary.values()), default=0)
     if not history:
         return "<b>Condition</b>: no wellness data from intervals.icu"
 
-    def cell(field: str, value: float | None) -> str:
-        if value is None:
-            return "-"
-        if field == "sleepHours":
-            return f"{value:.1f}"
-        if field == "form":
-            return f"{value:+.0f}"
-        return f"{value:.0f}"
-
     rows = [f"{'':<8}{'now':>5}{'7d':>5}{'30d':>5}{'best':>6}"]
     stale: list[str] = []
     for field, *_ in CONDITION_METRICS:
         m = summary[field]
-        now = cell(field, m["latest"])
-        if m["latest"] is not None and m["latest_date"] != today.isoformat():
+        if m["latest"] is None:
+            continue  # never reported in the whole history (e.g. Garmin doesn't sync readiness)
+        now = table_cell(field, m["latest"])
+        if m["latest_date"] != today.isoformat():
             now += "*"
             stale.append(f"{TABLE_LABELS[field]} from {date.fromisoformat(m['latest_date']).strftime('%b %d')}")
         rows.append(
-            f"{TABLE_LABELS[field]:<8}{now:>5}{cell(field, m.get('avg_7d')):>5}"
-            f"{cell(field, m.get('avg_30d')):>5}{cell(field, m.get('best')) if 'best' in m else '':>6}"
+            f"{TABLE_LABELS[field]:<8}{now:>5}{table_cell(field, m.get('avg_7d')):>5}"
+            f"{table_cell(field, m.get('avg_30d')):>5}{table_cell(field, m.get('best')) if 'best' in m else '':>6}"
         )
     if stale:
         rows.append("* " + "; ".join(f"{item}" for item in stale))
     return f"<b>Condition</b> (best = last {history} days)\n<pre>{html.escape(chr(10).join(rows))}</pre>"
+
+
+def add_status(summary: dict[str, dict[str, Any]]) -> None:
+    """Label each metric vs the athlete's 30-day average: green/yellow/red plus a word."""
+    for field, entry in summary.items():
+        latest, avg = entry["latest"], entry.get("avg_30d")
+        if latest is None:
+            entry["status"], entry["color"] = "no data", "white"
+            continue
+        if field == "form":
+            # Absolute TrainingPeaks-style bands rather than vs the average.
+            if latest > 5:
+                entry["status"], entry["color"] = "fresh", "green"
+            elif latest >= -10:
+                entry["status"], entry["color"] = "normal", "green"
+            elif latest >= -30:
+                entry["status"], entry["color"] = "tired", "yellow"
+            else:
+                entry["status"], entry["color"] = "overload", "red"
+            continue
+        if avg is None:
+            entry["status"], entry["color"] = "no norm", "white"
+            continue
+        threshold, relative, better_word, worse_word = STATUS_RULES[field]
+        limit = threshold * avg if relative else threshold
+        # Positive delta = better, whichever direction the metric improves in.
+        delta = avg - latest if field in ("restingHR", "atl") else latest - avg
+        if delta >= limit:
+            entry["status"], entry["color"] = better_word, "green"
+        elif delta > -limit:
+            entry["status"], entry["color"] = "normal", "green"
+        elif delta > -2 * limit:
+            entry["status"], entry["color"] = worse_word, "yellow"
+        else:
+            entry["status"], entry["color"] = worse_word, "red"
+
+
+STATUS_EMOJI = {"green": "\U0001F7E2", "yellow": "\U0001F7E1", "red": "\U0001F534", "white": "\u26AA"}
+
+
+def format_recovery(summary: dict[str, dict[str, Any]], verdict: str) -> str:
+    """Telegram HTML: the model's one-line verdict over a status table (today vs 30-day average)."""
+    rows = []
+    for field, *_ in CONDITION_METRICS:
+        m = summary[field]
+        if m["latest"] is None:
+            continue
+        label = TABLE_LABELS[field].replace(" ms", "").replace(" bpm", "")
+        row = f"{STATUS_EMOJI[m['color']]} {label:<8}{m['status']:<9}"
+        if m["latest"] is not None and m.get("avg_30d") is not None:
+            row += f"{table_cell(field, m['latest'])} vs {table_cell(field, m['avg_30d'])}"
+        rows.append(row.rstrip())
+    title = html.escape(verdict) if verdict else "Recovery"
+    return f"<b>{title}</b>\n<pre>{html.escape(chr(10).join(rows))}</pre>"
+
+
+def extract_recovery(report: str) -> tuple[str, str]:
+    """Pull the model's "Recovery:" paragraph out of the report so it can head the status table."""
+    match = re.search(r"^Recovery:.*?(?:\n\s*\n|\Z)", report, flags=re.MULTILINE | re.DOTALL)
+    if not match:
+        return "", report
+    verdict = " ".join(match.group(0).split())
+    rest = (report[:match.start()] + report[match.end():]).strip()
+    return verdict, re.sub(r"\n{3,}", "\n\n", rest)
+
+
+GLOSSARY = (
+    "Legend:\n"
+    "- HRV: heart rate variability, higher means better recovered.\n"
+    "- RHR: resting heart rate, lower means better recovered.\n"
+    "- Fitness (CTL): your training load averaged over about 6 weeks. It is long-term fitness and should rise slowly.\n"
+    "- Fatigue (ATL): your training load averaged over about 1 week. It is short-term tiredness.\n"
+    "- Form (CTL-ATL): fitness minus fatigue. Above +5 means fresh, -10 to +5 is normal, -10 to -30 is "
+    "productive training fatigue, and below -30 is overload risk. Staying very fresh for long means fitness is fading.\n"
+    "- Colours compare today with your 30-day average: green means normal or better, yellow means worse, "
+    "red means clearly worse."
+)
 
 
 def fetch_checkins(local_now: datetime) -> list[dict[str, str]]:
@@ -380,10 +473,15 @@ def generate_report(profile: dict[str, Any], data: dict[str, Any], condition: di
         "condition_summary holds each recovery metric's latest value, its 7- and 30-day averages (excluding the "
         "latest day) and the athlete's best value in the available history; 'better' says which direction is "
         "good. The athlete already sees these numbers as a table above your message, so don't repeat the table. "
-        "Use it for the \"Recovery:\" section: say how recovered the athlete is (well / partly / poorly), "
-        "comparing today with their recent normal and their best, and name the metrics that drive the verdict. "
+        "Each metric's 'status' (vs its 30-day average) is also shown to the athlete as a colour-coded table. "
+        "Write the \"Recovery:\" section as ONE line: the verdict (well / partly / poorly recovered), a dash, "
+        "and the two or three metrics that drive it, without numbers, 12 words at most. Example: "
+        "\"Recovery: Partly recovered - resting HR elevated, fitness slipping.\" "
         "Readiness, fitness (CTL), fatigue (ATL) and form (CTL-ATL, negative means carrying fatigue) all count. "
-        "A metric that is missing or stale (latest_date not today) should be called out, not guessed."
+        "Use the numbers in Why and Caution where they matter; a missing or stale metric (latest_date not today) "
+        "should be called out there, not guessed. A metric with latest null has never been reported (the watch "
+        "doesn't sync it), so don't mention it at all. A legend explaining the metrics is appended after your "
+        "message, so don't define them."
     )
     user_payload = {
         "current_local_time": local_now.strftime("%Y-%m-%d %H:%M %Z"),
@@ -395,8 +493,7 @@ def generate_report(profile: dict[str, Any], data: dict[str, Any], condition: di
         "training_data": compact_data(data),
         "output_format": [
             "Check-in: what the athlete reported today, or that there was no check-in",
-            "Recovery: verdict (well / partly / poorly recovered) and 2-3 sentences on how today compares with "
-            "the last 7-30 days and with the athlete's best, including readiness, fitness, fatigue and form",
+            "Recovery: one line - verdict and the main drivers, no numbers",
             "Today: train or rest, and at what intensity",
             "Air: AQI and category for the athlete's location, with an outdoor-training note (skip if unavailable)",
             "Why: 2-4 concise bullets",
@@ -463,10 +560,15 @@ def main() -> None:
     profile = load_profile()
     data = fetch_training_data()
     condition = summarize_condition(data["wellness_history"] or [])
+    add_status(condition)
     report = generate_report(profile, data, condition)
     if not report:
         raise RuntimeError("The model returned an empty report.")
+    verdict, report = extract_recovery(report)
     header = format_condition(condition, date.fromisoformat(data["generated_on"]))
+    if any(m["latest"] is not None for m in condition.values()):
+        header += "\n\n" + format_recovery(condition, verdict)
+    report = f"{report}\n\n{GLOSSARY}"
     print(header + "\n\n" + report)
     send_telegram(header, report)
 
