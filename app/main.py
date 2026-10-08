@@ -130,7 +130,7 @@ def compact_data(data: dict[str, Any]) -> dict[str, Any]:
 
 
 def summarize_condition(wellness: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
-    """Latest value of each recovery metric vs its 7- and 14-day averages and the best of the whole history.
+    """Latest value of each recovery metric vs its 7- and 30-day averages and the best of the whole history.
 
     Averages exclude the latest day, so they show what "normal" looked like before today.
     """
@@ -165,7 +165,7 @@ def summarize_condition(wellness: list[dict[str, Any]]) -> dict[str, dict[str, A
             "latest": round(latest, 1),
             "latest_date": latest_day.isoformat(),
             "avg_7d": mean([p for p in earlier if p[0] >= latest_day - timedelta(days=7)]),
-            "avg_14d": mean([p for p in earlier if p[0] >= latest_day - timedelta(days=14)]),
+            "avg_30d": mean([p for p in earlier if p[0] >= latest_day - timedelta(days=30)]),
         }
         if better:
             # Reversed so a tie goes to the most recent day.
@@ -191,7 +191,7 @@ TABLE_LABELS = {
 
 
 def format_condition(summary: dict[str, dict[str, Any]], today: date) -> str:
-    """Telegram HTML: a monospace table of latest vs 7d / 14d averages and best."""
+    """Telegram HTML: a monospace table of latest vs 7d / 30d averages and best."""
     history = max((m.get("history_days", 0) for m in summary.values()), default=0)
     if not history:
         return "<b>Condition</b>: no wellness data from intervals.icu"
@@ -205,7 +205,7 @@ def format_condition(summary: dict[str, dict[str, Any]], today: date) -> str:
             return f"{value:+.0f}"
         return f"{value:.0f}"
 
-    rows = [f"{'':<8}{'now':>5}{'7d':>5}{'14d':>5}{'best':>6}"]
+    rows = [f"{'':<8}{'now':>5}{'7d':>5}{'30d':>5}{'best':>6}"]
     stale: list[str] = []
     for field, *_ in CONDITION_METRICS:
         m = summary[field]
@@ -215,7 +215,7 @@ def format_condition(summary: dict[str, dict[str, Any]], today: date) -> str:
             stale.append(f"{TABLE_LABELS[field]} from {date.fromisoformat(m['latest_date']).strftime('%b %d')}")
         rows.append(
             f"{TABLE_LABELS[field]:<8}{now:>5}{cell(field, m.get('avg_7d')):>5}"
-            f"{cell(field, m.get('avg_14d')):>5}{cell(field, m.get('best')) if 'best' in m else '':>6}"
+            f"{cell(field, m.get('avg_30d')):>5}{cell(field, m.get('best')) if 'best' in m else '':>6}"
         )
     if stale:
         rows.append("* " + "; ".join(f"{item}" for item in stale))
@@ -377,7 +377,7 @@ def generate_report(profile: dict[str, Any], data: dict[str, Any], condition: di
         "with the AQI, its category (0-50 good, 51-100 moderate, 101-150 unhealthy for sensitive groups, "
         "151-200 unhealthy, 201+ very unhealthy) and the main pollutant. For outdoor training: above 100 suggest "
         "easing intensity or moving indoors, above 150 recommend indoors or rest. Do not invent numbers if it is null. "
-        "condition_summary holds each recovery metric's latest value, its 7- and 14-day averages (excluding the "
+        "condition_summary holds each recovery metric's latest value, its 7- and 30-day averages (excluding the "
         "latest day) and the athlete's best value in the available history; 'better' says which direction is "
         "good. The athlete already sees these numbers as a table above your message, so don't repeat the table. "
         "Use it for the \"Recovery:\" section: say how recovered the athlete is (well / partly / poorly), "
@@ -396,7 +396,7 @@ def generate_report(profile: dict[str, Any], data: dict[str, Any], condition: di
         "output_format": [
             "Check-in: what the athlete reported today, or that there was no check-in",
             "Recovery: verdict (well / partly / poorly recovered) and 2-3 sentences on how today compares with "
-            "the last 7-14 days and with the athlete's best, including readiness, fitness, fatigue and form",
+            "the last 7-30 days and with the athlete's best, including readiness, fitness, fatigue and form",
             "Today: train or rest, and at what intensity",
             "Air: AQI and category for the athlete's location, with an outdoor-training note (skip if unavailable)",
             "Why: 2-4 concise bullets",
