@@ -2,13 +2,21 @@
   "athlete_name": "Athlete",
   "timezone": "Asia/Tashkent",
   "goal": "Build consistent triathlon fitness while managing fatigue",
-  "easy_run_hr_cap_bpm": 125,
-  "vt1_hr_bpm": 136,
-  "vt2_hr_bpm": 150,
+  "easy_run_hr_cap_bpm": 130,
+  "vt1_hr_bpm": 130,
+  "vt2_hr_bpm": 155,
+  "run_hr_zones_bpm": {
+    "Z1 recovery": "<105",
+    "Z2 main aerobic": "105-130",
+    "Z3 aerobic/tempo": "130-145",
+    "Z4 threshold": "145-155",
+    "Z5 high intensity": ">155"
+  },
   "ftp_watts": 200,
   "weekly_training_hours_target": 9,
   "notes": [
-    "These are starter settings. Confirm or edit them before relying on recommendations.",
+    "HR zones and VT1/VT2 come from a gas-analyser (lab) running test done about a year ago; the lab called them provisional.",
+    "The zones are for running. Cycling HR at the same effort usually runs 5-10 bpm lower, so treat bike HR caps as slightly conservative.",
     "Do not recommend hard training when illness, unusual symptoms, or poor recovery are reported."
   ],
   "air_quality": {
