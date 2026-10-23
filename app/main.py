@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import html
 import json
 import re
@@ -16,12 +17,17 @@ from anthropic import Anthropic
 
 ROOT = Path(__file__).resolve().parents[1]
 PROFILE_PATH = ROOT / "config" / "profile.json"
+CHECKIN_LOG_PATH = ROOT / "data" / "checkins.csv"
 INTERVALS_BASE = "https://intervals.icu/api/v1"
 IQAIR_BASE = "https://api.airvisual.com/v2"
 WELLNESS_HISTORY_DAYS = 90
 
 # (field, label, unit, which direction is better: "high", "low" or None when neither is)
 CONDITION_METRICS = (
+    ("energy", "Energy (self, 1-5)", "", "high"),
+    ("body", "Body (self, 1-5)", "", "high"),
+    ("mood", "Mood (self, 1-5)", "", "high"),
+    ("health", "Health (self, 1-5)", "", "high"),
     ("hrv", "HRV", " ms", "high"),
     ("restingHR", "Resting HR", " bpm", "low"),
     ("sleepScore", "Sleep score", "", "high"),
@@ -35,6 +41,10 @@ CONDITION_METRICS = (
 # How far today may drift from the 30-day average before it counts as better or worse:
 # (threshold, is it a fraction of the average, word when better, word when worse).
 STATUS_RULES = {
+    "energy": (1, False, "high", "low"),
+    "body": (1, False, "fresh", "sore"),
+    "mood": (1, False, "good", "low"),
+    "health": (1, False, "good", "unwell"),
     "hrv": (0.07, True, "above", "below"),
     "restingHR": (2, False, "low", "high"),
     "sleepScore": (5, False, "good", "low"),
@@ -151,7 +161,10 @@ def summarize_condition(wellness: list[dict[str, Any]]) -> dict[str, dict[str, A
     series: dict[str, list[tuple[date, float]]] = {field: [] for field, *_ in CONDITION_METRICS}
     for row in rows:
         day = date.fromisoformat(str(row["id"])[:10])
-        values = {k: row.get(k) for k in ("hrv", "restingHR", "sleepScore", "readiness", "ctl", "atl")}
+        values = {
+            k: row.get(k)
+            for k in ("energy", "body", "mood", "health", "hrv", "restingHR", "sleepScore", "readiness", "ctl", "atl")
+        }
         if row.get("sleepSecs"):
             values["sleepHours"] = row["sleepSecs"] / 3600
         if row.get("ctl") is not None and row.get("atl") is not None:
@@ -192,6 +205,10 @@ def summarize_condition(wellness: list[dict[str, Any]]) -> dict[str, dict[str, A
 
 # Short row names keep the table about 30 characters wide, so it doesn't wrap on a phone.
 TABLE_LABELS = {
+    "energy": "Energy",
+    "body": "Body",
+    "mood": "Mood",
+    "health": "Health",
     "hrv": "HRV ms",
     "restingHR": "RHR bpm",
     "sleepScore": "Sleep",
@@ -390,6 +407,12 @@ def format_report(report: dict[str, Any]) -> str:
 
 
 GLOSSARY = (
+    "Check-in: send the bot E B M H scores, 1-5, where 5 is always good. Example: E4 B3 M4 H5 left knee sore\n"
+    "- E Energy: 5 full of energy, 3 normal, 1 exhausted.\n"
+    "- B Body (muscles, joints): 5 fresh with no pain, 3 normal light soreness, 1 strong pain or stiffness.\n"
+    "- M Mood (head, stress): 5 calm and motivated, 3 ordinary day, 1 heavy stress or irritable.\n"
+    "- H Health: 5 fully healthy, 3 first signs (scratchy throat, runny nose), 1 ill or feverish.\n"
+    "\n"
     "Legend:\n"
     "- HRV: heart rate variability, higher means better recovered.\n"
     "- RHR: resting heart rate, lower means better recovered.\n"
@@ -402,7 +425,54 @@ GLOSSARY = (
 )
 
 
-def fetch_checkins(local_now: datetime) -> list[dict[str, str]]:
+CHECKIN_FIELDS = {"E": "energy", "B": "body", "M": "mood", "H": "health"}
+# Cyrillic look-alikes, so the scores work on a Russian keyboard too.
+CYRILLIC_LOOKALIKES = str.maketrans({"Е": "E", "е": "E", "В": "B", "в": "B", "М": "M", "м": "M", "Н": "H", "н": "H"})
+SCORE_PATTERN = re.compile(r"(?<![^\W\d_])([EBMH])\s*[:=]?\s*([1-5])(?!\d)", re.IGNORECASE)
+
+
+def parse_scores(text: str) -> tuple[dict[str, int], str]:
+    """Pull "E4 B3 M4 H5" style self-assessment scores out of a check-in; the rest is the comment."""
+    # The look-alike swap is one character for one, so match positions line up with the original text.
+    matches = list(SCORE_PATTERN.finditer(text.translate(CYRILLIC_LOOKALIKES)))
+    scores = {CHECKIN_FIELDS[m.group(1).upper()]: int(m.group(2)) for m in matches}
+    comment = text
+    for match in reversed(matches):
+        comment = comment[:match.start()] + " " + comment[match.end():]
+    return scores, " ".join(comment.split()).strip(" ,.;")
+
+
+def load_checkin_log() -> list[dict[str, str]]:
+    if not CHECKIN_LOG_PATH.exists():
+        return []
+    with CHECKIN_LOG_PATH.open(encoding="utf-8", newline="") as f:
+        return list(csv.DictReader(f))
+
+
+def save_checkin(day: date, sent_at: str, scores: dict[str, int], comment: str) -> None:
+    """Keep one row per day (the latest check-in wins) so history stays comparable day to day."""
+    rows = [row for row in load_checkin_log() if row["date"] != day.isoformat()]
+    rows.append({"date": day.isoformat(), "time": sent_at, **{k: str(v) for k, v in scores.items()}, "comment": comment})
+    rows.sort(key=lambda row: row["date"])
+    CHECKIN_LOG_PATH.parent.mkdir(exist_ok=True)
+    with CHECKIN_LOG_PATH.open("w", encoding="utf-8", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=["date", "time", *CHECKIN_FIELDS.values(), "comment"])
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def merge_checkins_into_wellness(wellness: list[dict[str, Any]], log: list[dict[str, str]]) -> list[dict[str, Any]]:
+    """Add logged self-assessment scores to the intervals.icu wellness rows of the same day."""
+    by_day = {str(row.get("id", ""))[:10]: row for row in wellness if isinstance(row, dict)}
+    for entry in log:
+        row = by_day.setdefault(entry["date"], {"id": entry["date"]})
+        for field in CHECKIN_FIELDS.values():
+            if entry.get(field):
+                row[field] = int(entry[field])
+    return sorted(by_day.values(), key=lambda row: str(row["id"]))
+
+
+def fetch_checkins(local_now: datetime) -> list[dict[str, Any]]:
     """Return today's check-in message from workflow input or empty list.
 
     When triggered via webhook, the check-in text and timestamp are passed
@@ -428,7 +498,8 @@ def fetch_checkins(local_now: datetime) -> list[dict[str, str]]:
         # Only include if message is from today
         if sent.date() != local_now.date():
             return []
-        return [{"sent_at": sent.strftime("%H:%M"), "text": checkin_text}]
+        scores, comment = parse_scores(checkin_text)
+        return [{"sent_at": sent.strftime("%H:%M"), "text": checkin_text, "scores": scores, "comment": comment}]
     except (ValueError, OSError):
         # Invalid timestamp
         return []
@@ -520,15 +591,17 @@ def fetch_air_quality(profile: dict[str, Any]) -> dict[str, Any] | None:
 
 
 def generate_report(
-    profile: dict[str, Any], data: dict[str, Any], condition: dict[str, dict[str, Any]]
+    profile: dict[str, Any],
+    data: dict[str, Any],
+    condition: dict[str, dict[str, Any]],
+    local_now: datetime,
+    checkins: list[dict[str, Any]],
 ) -> dict[str, Any]:
     api_key = require_env("ANTHROPIC_API_KEY")
     client = Anthropic(api_key=api_key)
     model = os.getenv("ANTHROPIC_MODEL", "").strip() or "claude-opus-5-5"
     print(f"Using model: {model}", file=sys.stderr)
 
-    local_now = datetime.now(ZoneInfo(profile.get("timezone", "UTC")))
-    checkins = fetch_checkins(local_now)
     coach_plan = fetch_coach_plan(local_now)
     air_quality = fetch_air_quality(profile)
 
@@ -548,6 +621,12 @@ def generate_report(
         "alongside the objective metrics: illness symptoms or worsening pain call for rest or a "
         "lower-impact option. check_in briefly restates what the athlete reported today, morning and "
         "afternoon, or says no check-in was received. "
+        "A check-in may carry self-assessment 'scores' on a 1-5 scale where 5 is ALWAYS good: energy "
+        "(5 full of energy, 1 exhausted), body (5 fresh, no pain; 1 strong pain or stiffness), mood (5 calm, "
+        "1 heavy stress) and health (5 fully healthy, 3 first signs of illness, 1 ill). 'comment' is the rest of "
+        "the message. These rules are firm: health 2 or lower means rest only; body 2 or lower means no "
+        "intensity and no running or other impact; energy or mood 2 or lower means an easier session than "
+        "planned. The same four scores also appear in condition_summary with their 7- and 30-day history. "
         "coach_plan_trainingpeaks is the plan written by the athlete's coach (null means it isn't connected). "
         "When it has a session for today, base the recommendation on it: confirm it as written, or adjust it "
         "only when the check-in or recovery data give a clear reason, and say what changed and why. "
@@ -636,10 +715,29 @@ def send_telegram(message_html: str) -> None:
 
 def main() -> None:
     profile = load_profile()
+    local_now = datetime.now(ZoneInfo(profile.get("timezone", "UTC")))
+    checkins = fetch_checkins(local_now)
+    for checkin in checkins:
+        if checkin["scores"]:
+            save_checkin(local_now.date(), checkin["sent_at"], checkin["scores"], checkin["comment"])
+    log = load_checkin_log()
+    # A scheduled afternoon run has no message of its own; reuse this morning's logged check-in.
+    if not checkins:
+        checkins = [
+            {
+                "sent_at": entry["time"],
+                "text": entry["comment"],
+                "scores": {f: int(entry[f]) for f in CHECKIN_FIELDS.values() if entry.get(f)},
+                "comment": entry["comment"],
+            }
+            for entry in log
+            if entry["date"] == local_now.date().isoformat()
+        ]
     data = fetch_training_data()
-    condition = summarize_condition(data["wellness_history"] or [])
+    data["wellness_history"] = merge_checkins_into_wellness(data["wellness_history"] or [], log)
+    condition = summarize_condition(data["wellness_history"])
     add_status(condition)
-    report = generate_report(profile, data, condition)
+    report = generate_report(profile, data, condition, local_now, checkins)
     sections = [format_condition(condition, date.fromisoformat(data["generated_on"]))]
     if any(m["latest"] is not None for m in condition.values()):
         sections.append(format_recovery(condition, f"Recovery: {report['recovery_verdict']}"))
