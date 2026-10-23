@@ -407,11 +407,14 @@ def format_report(report: dict[str, Any]) -> str:
 
 
 GLOSSARY = (
-    "Check-in: send the bot E B M H scores, 1-5, where 5 is always good. Example: E4 B3 M4 H5 left knee sore\n"
+    "Check-in: send any of E B M H, 1-5, where 5 is always good; skip what you don't feel like rating. "
+    "Example: E4 B3 M4 H5 left knee sore\n"
     "- E Energy: 5 full of energy, 3 normal, 1 exhausted.\n"
     "- B Body (muscles, joints): 5 fresh with no pain, 3 normal light soreness, 1 strong pain or stiffness.\n"
     "- M Mood (head, stress): 5 calm and motivated, 3 ordinary day, 1 heavy stress or irritable.\n"
     "- H Health: 5 fully healthy, 3 first signs (scratchy throat, runny nose), 1 ill or feverish.\n"
+    "Your data decides; Health can override it, Body counts only when clearly worse than your usual, "
+    "Energy and Mood only tip borderline days.\n"
     "\n"
     "Legend:\n"
     "- HRV: heart rate variability, higher means better recovered.\n"
@@ -450,9 +453,17 @@ def load_checkin_log() -> list[dict[str, str]]:
 
 
 def save_checkin(day: date, sent_at: str, scores: dict[str, int], comment: str) -> None:
-    """Keep one row per day (the latest check-in wins) so history stays comparable day to day."""
-    rows = [row for row in load_checkin_log() if row["date"] != day.isoformat()]
-    rows.append({"date": day.isoformat(), "time": sent_at, **{k: str(v) for k, v in scores.items()}, "comment": comment})
+    """Keep one row per day. A later check-in updates only the scores it gives, so "H5" in the morning
+    and "B2 knee" in the afternoon end up in the same row."""
+    rows = load_checkin_log()
+    today = next((row for row in rows if row["date"] == day.isoformat()), None)
+    if today is None:
+        today = {"date": day.isoformat()}
+        rows.append(today)
+    today["time"] = sent_at
+    today.update({k: str(v) for k, v in scores.items()})
+    if comment:
+        today["comment"] = "; ".join(c for c in (today.get("comment"), comment) if c)
     rows.sort(key=lambda row: row["date"])
     CHECKIN_LOG_PATH.parent.mkdir(exist_ok=True)
     with CHECKIN_LOG_PATH.open("w", encoding="utf-8", newline="") as f:
@@ -624,9 +635,16 @@ def generate_report(
         "A check-in may carry self-assessment 'scores' on a 1-5 scale where 5 is ALWAYS good: energy "
         "(5 full of energy, 1 exhausted), body (5 fresh, no pain; 1 strong pain or stiffness), mood (5 calm, "
         "1 heavy stress) and health (5 fully healthy, 3 first signs of illness, 1 ill). 'comment' is the rest of "
-        "the message. These rules are firm: health 2 or lower means rest only; body 2 or lower means no "
-        "intensity and no running or other impact; energy or mood 2 or lower means an easier session than "
-        "planned. The same four scores also appear in condition_summary with their 7- and 30-day history. "
+        "the message. Any score may be missing: the athlete only sends what they want to, so never ask for or "
+        "assume a missing one. The athlete wants the objective data (HRV, resting HR, sleep, fitness, fatigue, "
+        "form) to decide the verdict and the intensity; self-assessment is secondary, with these roles: "
+        "health overrides the data, so health 2 or lower means rest only, and health 3 means easy only. "
+        "Body matters only relative to the athlete's own norm, because their body aches often: act on it only "
+        "when its status in condition_summary is red (clearly below their 30-day average) or the comment "
+        "reports new or sharp pain, and then remove running and other impact, not all intensity. A body score "
+        "at the athlete's usual level is background and changes nothing. Energy and mood are tie-breakers: use "
+        "them only when the objective data are borderline, to lean towards the easier option. "
+        "The same four scores also appear in condition_summary with their 7- and 30-day history. "
         "coach_plan_trainingpeaks is the plan written by the athlete's coach (null means it isn't connected). "
         "When it has a session for today, base the recommendation on it: confirm it as written, or adjust it "
         "only when the check-in or recovery data give a clear reason, and say what changed and why. "
