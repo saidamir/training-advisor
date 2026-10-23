@@ -18,7 +18,13 @@ on:
     - cron: "27 11 * * *"
 
 permissions:
-  contents: read
+  # write: the run commits data/checkins.csv so self-assessment history is kept.
+  contents: write
+
+# One run at a time, so two runs (check-in webhook + cron) never race on the check-in log.
+concurrency:
+  group: daily-report
+  cancel-in-progress: false
 
 jobs:
   report:
@@ -47,3 +53,14 @@ jobs:
           CHECKIN_TEXT: ${{ inputs.checkin_text }}
           CHECKIN_TIMESTAMP: ${{ inputs.checkin_timestamp }}
         run: python -m app.main
+      - name: Save check-in history
+        if: always()
+        run: |
+          if [ -n "$(git status --porcelain data/checkins.csv)" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add data/checkins.csv
+            git commit -m "Log check-in $(date -u +%F)"
+            git pull --rebase origin "${GITHUB_REF_NAME}"
+            git push origin "HEAD:${GITHUB_REF_NAME}"
+          fi
