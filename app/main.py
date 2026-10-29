@@ -13,6 +13,7 @@ from zoneinfo import ZoneInfo
 
 import requests
 from icalendar import Calendar
+import anthropic
 from anthropic import Anthropic
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -765,5 +766,41 @@ def main() -> None:
     send_telegram(message)
 
 
+def describe_failure(exc: Exception) -> str:
+    """Short, human reason for a failed run, in the language the athlete reads alerts in."""
+    if isinstance(exc, anthropic.AuthenticationError):
+        return "ключ Anthropic недействителен (обнови секрет ANTHROPIC_API_KEY)"
+    if isinstance(exc, anthropic.PermissionDeniedError):
+        return "Anthropic отказал в доступе (проверь баланс и ключ в console.anthropic.com)"
+    if isinstance(exc, anthropic.RateLimitError):
+        return "превышен лимит Anthropic, попробую в следующий раз"
+    if isinstance(exc, anthropic.APIStatusError):
+        return f"ошибка Anthropic {exc.status_code}"
+    if isinstance(exc, anthropic.APIConnectionError):
+        return "нет связи с Anthropic"
+    if isinstance(exc, requests.HTTPError) and exc.response is not None:
+        host = requests.utils.urlparse(exc.response.url).hostname or "сервис"
+        return f"{host} ответил ошибкой {exc.response.status_code}"
+    if isinstance(exc, requests.RequestException):
+        return f"сетевая ошибка: {type(exc).__name__}"
+    return f"{type(exc).__name__}: {str(exc)[:200]}"
+
+
+def notify_failure(exc: Exception) -> None:
+    """Best effort: tell the athlete the report failed, so silence never means 'all fine'."""
+    text = f"\u26A0\uFE0F Отчёт не сформирован: {describe_failure(exc)}."
+    run = os.getenv("GITHUB_RUN_ID")
+    if run:
+        text += f"\n{os.getenv('GITHUB_SERVER_URL')}/{os.getenv('GITHUB_REPOSITORY')}/actions/runs/{run}"
+    try:
+        send_telegram(html.escape(text, quote=False))
+    except Exception as send_exc:  # noqa: BLE001 - the original error is what matters
+        print(f"Could not send the failure alert to Telegram: {send_exc}", file=sys.stderr)
+
+
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as exc:
+        notify_failure(exc)
+        raise
