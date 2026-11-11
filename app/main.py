@@ -335,14 +335,19 @@ REPORT_SCHEMA = {
                     "items": {
                         "type": "object",
                         "properties": {
-                            "sport": {"type": "string", "description": "One word, max 6 chars: Ride, Run, Swim, Walk."},
+                            "sport": {"type": "string", "description": "One word, max 5 chars: Ride, Run, Swim, Walk, Gym."},
                             "duration": {"type": "string", "description": "Max 6 chars, e.g. '60m', '40-45m'."},
-                            "heart_rate": {"type": "string", "description": "Max 5 chars, e.g. '<125', '<=136'."},
+                            "heart_rate": {"type": "string", "description": "Max 7 chars, e.g. '<130', '145-155'."},
                             "target": {
                                 "type": "string",
                                 "description": "Max 10 chars: power, pace or zone, e.g. '130-150W', 'Z1-Z2'.",
                             },
-                            "note": {"type": "string", "description": "One short sentence with the rest of the detail."},
+                            "note": {
+                                "type": "string",
+                                "description": "The workout itself in at most 30 words. For a quality session: warm-up, "
+                                "main set (reps x duration at HR and power or pace) with recoveries, cool-down. For an "
+                                "easy one: where and how, e.g. cadence or technique focus.",
+                            },
                         },
                         "required": ["sport", "duration", "heart_rate", "target", "note"],
                         "additionalProperties": False,
@@ -370,12 +375,12 @@ def format_session(session: dict[str, Any]) -> str:
     if not options:
         return "<b>Session</b>: rest day"
     letters = "ABCDEFGH"
-    rows = [f"  {'Sport':<7}{'Time':<7}{'HR':<6}Target"]
+    rows = [f"  {'Sport':<6}{'Time':<7}{'HR':<8}Target"]
     notes = []
     for letter, option in zip(letters, options):
         rows.append(
-            f"{letter} {option['sport'][:6]:<7}{option['duration'][:6]:<7}"
-            f"{option['heart_rate'][:5]:<6}{option['target'][:10]}".rstrip()
+            f"{letter} {option['sport'][:5]:<6}{option['duration'][:6]:<7}"
+            f"{option['heart_rate'][:7]:<8}{option['target'][:10]}".rstrip()
         )
         if option["note"]:
             notes.append(f"{letter}: {html.escape(option['note'])}")
@@ -618,11 +623,25 @@ def generate_report(
     air_quality = fetch_air_quality(profile)
 
     system_prompt = (
-        "You are a cautious endurance-training planning assistant. Use only the supplied profile and data. "
-        "Do not diagnose or invent missing metrics. Clearly state when data is missing. "
-        "Give a practical recommendation for today: train/rest, suggested sport and duration/intensity, "
-        "why, and what to monitor. Consider recent load, wellness, upcoming events, and the athlete's stated "
-        "limits. Do not prescribe intensity above the profile's limits without a clear reason. "
+        "You are an experienced endurance coach planning today's training for a trained age-group triathlete "
+        "(see athlete_profile.level): an intermediate athlete, not a beginner, so plan real training, while "
+        "keeping them out of overtraining. Use only the supplied profile and data. Do not diagnose or invent "
+        "missing metrics. Clearly state when data is missing. "
+        "Training principles: keep about 80% of weekly time in Z1-Z2 and make the rest purposeful quality. "
+        "Aim for 2 quality sessions a week (3 at most) plus one long session, never hard on two days in a row, "
+        "and weekly volume around weekly_training_hours_target. Use the last 7 days of activities (zone times, "
+        "load) to see what was done and what the week still needs. When recovery allows it and there was no "
+        "hard session in the last 48 hours, prescribe a real quality session, for example: run threshold "
+        "4-6 x 5 min in Z4 with 2 min easy; bike sweet spot or threshold 3 x 10-15 min at 88-100% of FTP; "
+        "VO2max 5 x 3 min in Z5 or at 110-120% of FTP with equal recovery; tempo 20-30 min in Z3; or a long "
+        "Z2 ride of 2-3 h or run of 75-90 min. Easy days are genuinely easy (Z1-Z2) but a proper 45-90 min "
+        "session, not a token 20-30 minutes. Give quality sessions an exact structure: warm-up, main set "
+        "(reps x duration at HR and power or pace), recoveries, cool-down. easy_run_hr_cap_bpm and VT1 cap "
+        "easy sessions only; quality sessions use the athlete's zones. "
+        "Overtraining guard, which overrides the plan: go easy or rest when form is below -25, when HRV or "
+        "resting HR has been red for two days running, when CTL rampRate is above about 7 a week, after "
+        "several poor nights, or on illness signs. After about three weeks of rising load, suggest a lighter "
+        "week. Say so plainly when you hold back and why. "
         "If data suggests illness, severe fatigue, unusual symptoms, or a concerning health signal, recommend "
         "rest or professional advice rather than a hard session. Keep every field short: it is read on a phone "
         "in Telegram. Plain text only in every field, no Markdown. "
