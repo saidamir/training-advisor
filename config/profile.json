@@ -1,7 +1,13 @@
 {
   "athlete_name": "Athlete",
   "timezone": "Asia/Tashkent",
-  "goal": "Build consistent triathlon fitness while managing fatigue",
+  "goal": "Improve triathlon performance (swim, bike, run) with structured training, without overtraining",
+  "level": {
+    "description": "Trained recreational age-group triathlete, not a beginner",
+    "vo2max_garmin": 42,
+    "experience": "About 1 year of consistent structured training, and trained a lot for years before that",
+    "benchmark": "Around average for age group by Garmin standards, so plan for an intermediate athlete, not an elite one"
+  },
   "easy_run_hr_cap_bpm": 130,
   "vt1_hr_bpm": 130,
   "vt2_hr_bpm": 155,
