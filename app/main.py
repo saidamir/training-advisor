@@ -16,6 +16,8 @@ from icalendar import Calendar
 import anthropic
 from anthropic import Anthropic
 
+from app.garmin import fetch_garmin_daily
+
 ROOT = Path(__file__).resolve().parents[1]
 PROFILE_PATH = ROOT / "config" / "profile.json"
 CHECKIN_LOG_PATH = ROOT / "data" / "checkins.csv"
@@ -33,6 +35,8 @@ CONDITION_METRICS = (
     ("restingHR", "Resting HR", " bpm", "low"),
     ("sleepScore", "Sleep score", "", "high"),
     ("sleepHours", "Sleep", " h", "high"),
+    ("bodyBattery", "Body Battery (Garmin, max of the day)", "", "high"),
+    ("stress", "Stress (Garmin, daily average)", "", "low"),
     ("readiness", "Readiness", "", "high"),
     ("ctl", "Fitness (CTL)", "", "high"),
     ("atl", "Fatigue (ATL)", "", None),
@@ -42,6 +46,8 @@ CONDITION_METRICS = (
 # How far today may drift from the 30-day average before it counts as better or worse:
 # (threshold, is it a fraction of the average, word when better, word when worse).
 STATUS_RULES = {
+    "bodyBattery": (10, False, "high", "low"),
+    "stress": (5, False, "low", "high"),
     "energy": (1, False, "high", "low"),
     "body": (1, False, "fresh", "sore"),
     "mood": (1, False, "good", "low"),
@@ -164,7 +170,10 @@ def summarize_condition(wellness: list[dict[str, Any]]) -> dict[str, dict[str, A
         day = date.fromisoformat(str(row["id"])[:10])
         values = {
             k: row.get(k)
-            for k in ("energy", "body", "mood", "health", "hrv", "restingHR", "sleepScore", "readiness", "ctl", "atl")
+            for k in (
+                "energy", "body", "mood", "health", "hrv", "restingHR", "sleepScore", "bodyBattery", "stress",
+                "readiness", "ctl", "atl",
+            )
         }
         if row.get("sleepSecs"):
             values["sleepHours"] = row["sleepSecs"] / 3600
@@ -214,6 +223,8 @@ TABLE_LABELS = {
     "restingHR": "RHR bpm",
     "sleepScore": "Sleep",
     "sleepHours": "Sleep h",
+    "bodyBattery": "BodyBat",
+    "stress": "Stress",
     "readiness": "Ready",
     "ctl": "Fitness",
     "atl": "Fatigue",
@@ -280,7 +291,7 @@ def add_status(summary: dict[str, dict[str, Any]]) -> None:
         threshold, relative, better_word, worse_word = STATUS_RULES[field]
         limit = threshold * avg if relative else threshold
         # Positive delta = better, whichever direction the metric improves in.
-        delta = avg - latest if field in ("restingHR", "atl") else latest - avg
+        delta = avg - latest if field in ("restingHR", "atl", "stress") else latest - avg
         if delta >= limit:
             entry["status"], entry["color"] = better_word, "green"
         elif delta > -limit:
@@ -425,6 +436,9 @@ GLOSSARY = (
     "Legend:\n"
     "- HRV: heart rate variability, higher means better recovered.\n"
     "- RHR: resting heart rate, lower means better recovered.\n"
+    "- HRV, RHR and sleep come straight from Garmin; fitness, fatigue and form from intervals.icu.\n"
+    "- BodyBat: Garmin Body Battery, the highest charge of the day (0-100), higher is better.\n"
+    "- Stress: Garmin's average stress for the day (0-100), lower is better.\n"
     "- Fitness (CTL): your training load averaged over about 6 weeks. It is long-term fitness and should rise slowly.\n"
     "- Fatigue (ATL): your training load averaged over about 1 week. It is short-term tiredness.\n"
     "- Form (CTL-ATL): fitness minus fatigue. Above +5 means fresh, -10 to +5 is normal, -10 to -30 is "
@@ -476,6 +490,14 @@ def save_checkin(day: date, sent_at: str, scores: dict[str, int], comment: str) 
         writer = csv.DictWriter(f, fieldnames=["date", "time", *CHECKIN_FIELDS.values(), "comment"])
         writer.writeheader()
         writer.writerows(rows)
+
+
+def merge_garmin_into_wellness(wellness: list[dict[str, Any]], garmin: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+    """Garmin's own HRV, resting HR and sleep replace intervals.icu's copies, which sync later."""
+    by_day = {str(row.get("id", ""))[:10]: row for row in wellness if isinstance(row, dict)}
+    for day, values in garmin.items():
+        by_day.setdefault(day, {"id": day}).update(values)
+    return sorted(by_day.values(), key=lambda row: str(row["id"]))
 
 
 def merge_checkins_into_wellness(wellness: list[dict[str, Any]], log: list[dict[str, str]]) -> list[dict[str, Any]]:
@@ -681,6 +703,10 @@ def generate_report(
         "Each metric's 'status' (vs its 30-day average) is also shown to the athlete as a colour-coded table. "
         "recovery_verdict heads that table, so keep it to the verdict and its main drivers. "
         "Readiness, fitness (CTL), fatigue (ATL) and form (CTL-ATL, negative means carrying fatigue) all count. "
+        "HRV, resting HR and sleep in condition_summary come straight from Garmin; Body Battery (the day's "
+        "highest charge) and stress (daily average, lower is better) are Garmin-only. garmin_extras.hrv_status is "
+        "Garmin's own HRV verdict against the athlete's baseline (BALANCED, UNBALANCED, LOW): weigh it with the "
+        "7/30-day comparison. garmin_extras.vo2max is Garmin's current VO2max estimate per sport. "
         "Use the numbers in Why and Caution where they matter; a missing or stale metric (latest_date not today) "
         "should be called out there, not guessed. A metric with latest null has never been reported (the watch "
         "doesn't sync it), so don't mention it at all. A legend explaining the metrics is appended after your "
@@ -694,6 +720,7 @@ def generate_report(
         "air_quality_iqair": air_quality,
         "athlete_profile": profile,
         "condition_summary": condition,
+        "garmin_extras": data.get("garmin") or None,
         "training_data": compact_data(data),
     }
     # If the model declines on a safety classifier, the API retries on a fallback model in the same call.
@@ -772,11 +799,20 @@ def main() -> None:
             if entry["date"] == local_now.date().isoformat()
         ]
     data = fetch_training_data()
+    warnings: list[str] = []
+    data["garmin"] = {}
+    try:
+        today = date.fromisoformat(data["generated_on"])
+        garmin_days, data["garmin"] = fetch_garmin_daily(today - timedelta(days=WELLNESS_HISTORY_DAYS), today)
+        data["wellness_history"] = merge_garmin_into_wellness(data["wellness_history"] or [], garmin_days)
+    except Exception as exc:  # noqa: BLE001 - Garmin is an extra source; the report must still go out
+        print(f"Garmin unavailable; using intervals.icu wellness only: {exc}", file=sys.stderr)
+        warnings.append(f"\u26A0\uFE0F Garmin недоступен ({describe_failure(exc)}), данные из intervals.icu.")
     data["wellness_history"] = merge_checkins_into_wellness(data["wellness_history"] or [], log)
     condition = summarize_condition(data["wellness_history"])
     add_status(condition)
     report = generate_report(profile, data, condition, local_now, checkins)
-    sections = [format_condition(condition, date.fromisoformat(data["generated_on"]))]
+    sections = [html.escape(w) for w in warnings] + [format_condition(condition, date.fromisoformat(data["generated_on"]))]
     if any(m["latest"] is not None for m in condition.values()):
         sections.append(format_recovery(condition, f"Recovery: {report['recovery_verdict']}"))
     sections += [format_report(report), html.escape(GLOSSARY)]

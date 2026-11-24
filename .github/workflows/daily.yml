@@ -11,11 +11,6 @@ on:
         description: 'Check-in message timestamp (Unix)'
         required: false
         type: string
-      garmin_probe:
-        description: 'Only print the shape of Garmin API responses (no report)'
-        required: false
-        type: boolean
-        default: false
   schedule:
     # 06:37 and 16:27 Uzbekistan time (UTC+5), after the athlete's check-in.
     # Off-the-hour minutes avoid GitHub's busiest scheduling slots.
@@ -45,13 +40,7 @@ jobs:
           cache: pip
       - name: Install dependencies
         run: pip install -r requirements.txt
-      - name: Probe Garmin API
-        if: ${{ inputs.garmin_probe }}
-        env:
-          GARMIN_API_KEY: ${{ secrets.GARMIN_API_KEY }}
-        run: python -m app.garmin_probe
       - name: Generate and send report
-        if: ${{ !inputs.garmin_probe }}
         env:
           INTERVALS_API_KEY: ${{ secrets.INTERVALS_API_KEY }}
           INTERVALS_ATHLETE_ID: ${{ secrets.INTERVALS_ATHLETE_ID }}
@@ -60,6 +49,7 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           TRAININGPEAKS_ICAL_URL: ${{ secrets.TRAININGPEAKS_ICAL_URL }}
           IQAIR_API_KEY: ${{ secrets.IQAIR_API_KEY }}
+          GARMIN_API_KEY: ${{ secrets.GARMIN_API_KEY }}
           ANTHROPIC_MODEL: ${{ vars.ANTHROPIC_MODEL }}
           CHECKIN_TEXT: ${{ inputs.checkin_text }}
           CHECKIN_TIMESTAMP: ${{ inputs.checkin_timestamp }}
