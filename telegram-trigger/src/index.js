@@ -1,10 +1,14 @@
 /**
- * Cloudflare Worker: Telegram check-in -> GitHub Actions trigger.
+ * Cloudflare Worker: runs the "Daily Training Advisor" GitHub workflow.
  *
- * Telegram calls this worker (via a webhook) the instant you send the bot a
- * message. The worker checks it's really Telegram and really your chat, then
- * asks GitHub to run the "Daily Training Advisor" workflow right away,
- * passing the check-in message text and timestamp as workflow inputs.
+ * Two ways in:
+ *   - fetch: Telegram calls this worker (via a webhook) the instant you send
+ *     the bot a message. The worker checks it's really Telegram and really
+ *     your chat, then dispatches the workflow with the check-in text and
+ *     timestamp as inputs.
+ *   - scheduled: Cloudflare Cron Triggers (see wrangler.toml) dispatch the
+ *     workflow at the report times. GitHub's own `schedule:` runs hours late,
+ *     Cloudflare's run on the minute.
  *
  * Required secrets/vars (set with `wrangler secret put <NAME>` unless noted):
  *   GITHUB_PAT               - fine-grained PAT, "Actions: write" on this repo only
@@ -15,6 +19,28 @@
  *   TELEGRAM_CHAT_ID          - your chat id, so a stranger can't fire your workflow
  *   TELEGRAM_WEBHOOK_SECRET   - random string, must match Telegram's secret_token
  */
+
+async function dispatchWorkflow(env, inputs) {
+  const dispatchUrl =
+    `https://api.github.com/repos/${env.GITHUB_OWNER}/${env.GITHUB_REPO}` +
+    `/actions/workflows/${env.WORKFLOW_FILE}/dispatches`;
+
+  const body = { ref: env.GITHUB_REF || "main" };
+  if (inputs) {
+    body.inputs = inputs;
+  }
+
+  return fetch(dispatchUrl, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${env.GITHUB_PAT}`,
+      Accept: "application/vnd.github+json",
+      "X-GitHub-Api-Version": "2022-11-28",
+      "User-Agent": "training-advisor-telegram-trigger",
+    },
+    body: JSON.stringify(body),
+  });
+}
 
 export default {
   async fetch(request, env) {
@@ -51,26 +77,10 @@ export default {
       return new Response("ignored", { status: 200 });
     }
 
-    const dispatchUrl =
-      `https://api.github.com/repos/${env.GITHUB_OWNER}/${env.GITHUB_REPO}` +
-      `/actions/workflows/${env.WORKFLOW_FILE}/dispatches`;
-
     // Pass the check-in message text and timestamp as workflow inputs
-    const ghResponse = await fetch(dispatchUrl, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${env.GITHUB_PAT}`,
-        Accept: "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28",
-        "User-Agent": "training-advisor-telegram-trigger",
-      },
-      body: JSON.stringify({
-        ref: env.GITHUB_REF || "main",
-        inputs: {
-          checkin_text: message.text,
-          checkin_timestamp: String(message.date)
-        }
-      }),
+    const ghResponse = await dispatchWorkflow(env, {
+      checkin_text: message.text,
+      checkin_timestamp: String(message.date),
     });
 
     if (!ghResponse.ok) {
@@ -80,5 +90,15 @@ export default {
     }
 
     return new Response("dispatched", { status: 200 });
+  },
+
+  async scheduled(event, env) {
+    const ghResponse = await dispatchWorkflow(env);
+    if (!ghResponse.ok) {
+      const body = await ghResponse.text();
+      // Throwing marks the cron run as failed in the Cloudflare dashboard.
+      throw new Error(`GitHub dispatch for cron "${event.cron}" failed: ${ghResponse.status} ${body}`);
+    }
+    console.log(`Dispatched the report for cron "${event.cron}"`);
   },
 };

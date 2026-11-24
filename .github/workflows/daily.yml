@@ -49,6 +49,7 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           TRAININGPEAKS_ICAL_URL: ${{ secrets.TRAININGPEAKS_ICAL_URL }}
           IQAIR_API_KEY: ${{ secrets.IQAIR_API_KEY }}
+          GARMIN_API_KEY: ${{ secrets.GARMIN_API_KEY }}
           ANTHROPIC_MODEL: ${{ vars.ANTHROPIC_MODEL }}
           CHECKIN_TEXT: ${{ inputs.checkin_text }}
           CHECKIN_TIMESTAMP: ${{ inputs.checkin_timestamp }}
