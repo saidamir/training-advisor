@@ -9,7 +9,7 @@ A daily training-readiness and workout-planning report delivered to Telegram usi
 - Reviews recent training load, sessions, and recovery signals
 - Produces a concise coaching-style report with Claude (Anthropic), using your profile settings
 - Sends the report to Telegram
-- Runs automatically on schedule AND instantly when you message the bot
+- Runs instantly when you message the bot (no scheduled reports)
 - Optionally integrates with your coach's TrainingPeaks plan
 
 **This is a decision-support tool, not medical advice.** It should not override your coach, symptoms, or clinician's guidance.
@@ -115,7 +115,7 @@ In your forked repository:
 
 ## Part 2: Instant Webhook Trigger (Optional but Recommended)
 
-By default, reports run on a schedule (06:37 and 16:27 UTC). Add webhook triggering to get instant reports when you message the bot!
+Reports run when you message the bot, so this webhook is how reports get triggered at all. Set it up!
 
 ### Step 1: Install Node.js and wrangler
 
@@ -212,31 +212,16 @@ The report will:
 
 ### Special messages
 
-- Send `skip` if you want the scheduled report without a check-in
+- Send `skip` if you want a report without a check-in
 - Bot commands like `/start` are ignored
 
 ### Scheduled reports
 
-Even without messaging, reports automatically run at:
-- **06:37 UTC** (morning report)
-- **16:27 UTC** (afternoon report)
-
-*Change these times in `.github/workflows/daily.yml` if needed*
+There are none: no message, no report. To add fixed-time reports, see `telegram-trigger/README.md` (Cloudflare Cron Triggers).
 
 ---
 
 ## Customization
-
-### Change the schedule
-
-Edit `.github/workflows/daily.yml`, lines 17-18:
-
-```yaml
-- cron: "37 1 * * *"   # Format: "minute hour * * *" in UTC
-- cron: "27 11 * * *"
-```
-
-Use https://crontab.guru to help with cron syntax.
 
 ### Change the AI model
 
@@ -283,7 +268,6 @@ The AI uses these to tailor recommendations to your fitness level.
 
 ### "409 Conflict" from Telegram
 - You can't use both `getUpdates` and webhooks simultaneously
-- If you set up webhooks, the scheduled cron will work but manual API calls won't
 - This is expected behavior
 
 ### Workflow runs but no message received
