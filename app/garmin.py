@@ -6,6 +6,7 @@ on data requests (the key itself is not accepted there).
 from __future__ import annotations
 
 import os
+import sys
 from datetime import date, timedelta
 from typing import Any
 
@@ -62,32 +63,58 @@ def fetch_garmin_daily(start: date, end: date) -> tuple[dict[str, dict[str, Any]
     def day(calendar_date: str) -> dict[str, Any]:
         return days.setdefault(calendar_date[:10], {})
 
+    def items(payload: Any) -> list[dict[str, Any]]:
+        """Days without data come back as nulls or without a date; skip those."""
+        return [i for i in payload or [] if isinstance(i, dict) and isinstance(i.get("calendarDate"), str)]
+
+    def obj(value: Any) -> dict[str, Any]:
+        return value if isinstance(value, dict) else {}
+
+    failures: list[str] = []
+
+    def guarded(name: str, read) -> None:
+        # One endpoint failing (or changing shape) must not cost the others.
+        try:
+            read()
+        except (requests.RequestException, ValueError, TypeError, KeyError, AttributeError) as exc:
+            failures.append(f"{name}: {type(exc).__name__}: {exc}")
+
     for a, b in _windows(start, end):
         a_s, b_s = a.isoformat(), b.isoformat()
 
-        summaries = garmin_get("/usersummary-service/v2/dailysummaries", {"startDate": a_s, "endDate": b_s})
-        for item in (summaries or {}).get("data") or []:
-            row = day(item["calendarDate"])
-            row["restingHR"] = (item.get("heartRate") or {}).get("restingValue")
-            row["bodyBattery"] = (item.get("bodyBattery") or {}).get("maxValue")
-            row["stress"] = (item.get("stress") or {}).get("avgLevel")
+        def read_summaries() -> None:
+            payload = garmin_get("/usersummary-service/v2/dailysummaries", {"startDate": a_s, "endDate": b_s})
+            for item in items(obj(payload).get("data")):
+                row = day(item["calendarDate"])
+                row["restingHR"] = obj(item.get("heartRate")).get("restingValue")
+                row["bodyBattery"] = obj(item.get("bodyBattery")).get("maxValue")
+                row["stress"] = obj(item.get("stress")).get("avgLevel")
 
-        for item in garmin_get("/sleep-service/sleep/dailySleepSummariesByDate", {"startDate": a_s, "endDate": b_s}) or []:
-            row = day(item["calendarDate"])
-            row["sleepSecs"] = item.get("sleepTimeSeconds")
-            row["sleepScore"] = ((item.get("sleepScores") or {}).get("overall") or {}).get("value")
+        def read_sleep() -> None:
+            payload = garmin_get("/sleep-service/sleep/dailySleepSummariesByDate", {"startDate": a_s, "endDate": b_s})
+            for item in items(payload):
+                row = day(item["calendarDate"])
+                row["sleepSecs"] = item.get("sleepTimeSeconds")
+                row["sleepScore"] = obj(obj(item.get("sleepScores")).get("overall")).get("value")
 
-        hrv = garmin_get(f"/hrv-service/hrv/daily/{a_s}/{b_s}") or {}
-        for item in hrv.get("hrvSummaries") or []:
-            day(item["calendarDate"])["hrv"] = item.get("lastNightAvg")
-            hrv_details[item["calendarDate"][:10]] = {
-                "status": item.get("status"),
-                "weekly_avg": item.get("weeklyAvg"),
-                "baseline_balanced_range": [
-                    (item.get("baseline") or {}).get("balancedLow"),
-                    (item.get("baseline") or {}).get("balancedUpper"),
-                ],
-            }
+        def read_hrv() -> None:
+            for item in items(obj(garmin_get(f"/hrv-service/hrv/daily/{a_s}/{b_s}")).get("hrvSummaries")):
+                day(item["calendarDate"])["hrv"] = item.get("lastNightAvg")
+                baseline = obj(item.get("baseline"))
+                hrv_details[item["calendarDate"][:10]] = {
+                    "status": item.get("status"),
+                    "weekly_avg": item.get("weeklyAvg"),
+                    "baseline_balanced_range": [baseline.get("balancedLow"), baseline.get("balancedUpper")],
+                }
+
+        guarded(f"daily summaries {a_s}", read_summaries)
+        guarded(f"sleep {a_s}", read_sleep)
+        guarded(f"hrv {a_s}", read_hrv)
+
+    if failures and not days:
+        raise RuntimeError("all Garmin requests failed: " + "; ".join(failures[:3]))
+    for failure in failures:
+        print(f"Garmin partial failure: {failure}", file=sys.stderr)
 
     extras: dict[str, Any] = {}
     if hrv_details:
@@ -98,12 +125,12 @@ def fetch_garmin_daily(start: date, end: date) -> tuple[dict[str, dict[str, Any]
         values = {}
         for item in vo2 or []:
             for sport in ("generic", "cycling"):
-                entry = item.get(sport) if isinstance(item, dict) else None
-                if entry and entry.get("vo2MaxValue"):
+                entry = obj(item).get(sport)
+                if isinstance(entry, dict) and entry.get("vo2MaxValue"):
                     values[sport] = {"value": entry["vo2MaxValue"], "date": entry.get("calendarDate")}
         if values:
             extras["vo2max"] = values
-    except requests.HTTPError:
+    except (requests.RequestException, ValueError, TypeError):
         pass  # VO2max isn't in the published spec; not every account serves it
     # Drop empty values so they don't overwrite intervals.icu data with nothing.
     clean = {d: {k: v for k, v in row.items() if v is not None} for d, row in days.items()}
