@@ -71,6 +71,16 @@ Message the bot anything. Check **Actions** in the repo — a new run of
 "Daily Training Advisor" should appear within a few seconds, triggered by
 `workflow_dispatch`, not `schedule`.
 
+## Scheduled reports (Cron Triggers)
+`wrangler.toml` also has `[triggers] crons`, so Cloudflare itself dispatches the
+workflow at 06:37 and 16:27 Tashkent time (01:37 and 11:27 UTC). GitHub's own
+`schedule:` can run hours late; Cloudflare's crons run on the minute. They go
+live with the next `wrangler deploy`. Once they do, drop the `schedule:` block
+from `.github/workflows/daily.yml`, or every report arrives twice.
+
+To check: Cloudflare dashboard → Workers & Pages → this worker → Settings →
+Triggers lists the two crons, and each run shows up in the worker's logs.
+
 ## Troubleshooting
 - `curl "https://api.telegram.org/bot<TOKEN>/getWebhookInfo"` shows the
   current webhook and the last delivery error, if any.
