@@ -11,17 +11,14 @@ on:
         description: 'Check-in message timestamp (Unix)'
         required: false
         type: string
-  schedule:
-    # 06:37 and 16:27 Uzbekistan time (UTC+5), after the athlete's check-in.
-    # Off-the-hour minutes avoid GitHub's busiest scheduling slots.
-    - cron: "37 1 * * *"
-    - cron: "27 11 * * *"
+  # No schedule: reports run when a Telegram check-in arrives (via the Cloudflare
+  # Worker) or when dispatched by hand. GitHub's own schedule ran hours late.
 
 permissions:
   # write: the run commits data/checkins.csv so self-assessment history is kept.
   contents: write
 
-# One run at a time, so two runs (check-in webhook + cron) never race on the check-in log.
+# One run at a time, so two quick check-ins never race on the check-in log.
 concurrency:
   group: daily-report
   cancel-in-progress: false

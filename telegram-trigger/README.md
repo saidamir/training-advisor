@@ -1,15 +1,8 @@
 # Telegram → GitHub Actions trigger
 
 A small Cloudflare Worker that makes your Telegram check-in message fire the
-"Daily Training Advisor" workflow immediately, instead of waiting on
-GitHub's `schedule:` cron (which can run hours late).
-
-The existing `schedule:` cron in `.github/workflows/daily.yml` stays in
-place as a fallback for the days you forget to check in. **This means on a
-day you message the bot right around 06:37 or 16:27 Tashkent time, you may
-get two reports close together.** That's a known, accepted tradeoff, not a
-bug — see the main README's Troubleshooting section if you want to change
-it later (e.g. drop the cron, or add dedup).
+"Daily Training Advisor" workflow immediately. This is the only automatic
+trigger: there are no scheduled reports, so no message means no report.
 
 ## What it does
 
@@ -71,15 +64,12 @@ Message the bot anything. Check **Actions** in the repo — a new run of
 "Daily Training Advisor" should appear within a few seconds, triggered by
 `workflow_dispatch`, not `schedule`.
 
-## Scheduled reports (Cron Triggers)
-`wrangler.toml` also has `[triggers] crons`, so Cloudflare itself dispatches the
-workflow at 06:37 and 16:27 Tashkent time (01:37 and 11:27 UTC). GitHub's own
-`schedule:` can run hours late; Cloudflare's crons run on the minute. They go
-live with the next `wrangler deploy`. Once they do, drop the `schedule:` block
-from `.github/workflows/daily.yml`, or every report arrives twice.
-
-To check: Cloudflare dashboard → Workers & Pages → this worker → Settings →
-Triggers lists the two crons, and each run shows up in the worker's logs.
+## Scheduled reports (off by default)
+The worker has a `scheduled()` handler, so reports at fixed times are two lines
+away: uncomment `[triggers] crons` in `wrangler.toml` and run `wrangler deploy`.
+Cloudflare's crons run on the minute (GitHub's own `schedule:` ran hours late,
+which is why it was removed). Check: Cloudflare dashboard → Workers & Pages →
+this worker → Settings → Triggers.
 
 ## Troubleshooting
 - `curl "https://api.telegram.org/bot<TOKEN>/getWebhookInfo"` shows the

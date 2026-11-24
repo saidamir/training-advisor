@@ -2,10 +2,11 @@ name = "training-advisor-telegram-trigger"
 main = "src/index.js"
 compatibility_date = "2026-09-01"
 
-# Report times, in UTC: 01:37 and 11:27 UTC are 06:37 and 16:27 in Tashkent (UTC+5).
-# Off-the-hour minutes avoid the busiest scheduling slots.
-[triggers]
-crons = ["37 1 * * *", "27 11 * * *"]
+# Scheduled reports are off: reports run on Telegram check-ins only. To turn them
+# back on, uncomment and run `wrangler deploy` (times are UTC; 01:37 and 11:27 UTC
+# are 06:37 and 16:27 in Tashkent):
+# [triggers]
+# crons = ["37 1 * * *", "27 11 * * *"]
 
 # Plain (non-secret) vars — safe to commit, they're just identifiers.
 [vars]
